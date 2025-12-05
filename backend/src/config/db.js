@@ -1,8 +1,9 @@
+// backend/src/config/db.js
 import mongoose from "mongoose";
 import env from "./env.js";
 import logger from "./logger.js";
+import connectionPool from "./connectionPool.js";
 
-// Настройка mongoose для лучшей производительности
 mongoose.set("strictQuery", true);
 
 const connectDB = async () => {
@@ -13,6 +14,11 @@ const connectDB = async () => {
       socketTimeoutMS: 45000,
       serverSelectionTimeoutMS: 5000,
       family: 4,
+      // Дополнительные опции для production
+      retryWrites: true,
+      retryReads: true,
+      compressors: ["zlib"], // Сжатие данных
+      zlibCompressionLevel: 6,
     };
 
     const conn = await mongoose.connect(env.MONGO_URI, options);
@@ -20,7 +26,13 @@ const connectDB = async () => {
     logger.info("MongoDB Connected", {
       host: conn.connection.host,
       name: conn.connection.name,
+      poolSize: options.maxPoolSize,
     });
+
+    // Логируем метрики пула каждые 5 минут
+    setInterval(() => {
+      connectionPool.logMetrics();
+    }, 300000);
 
     // Обработка ошибок подключения
     mongoose.connection.on("error", (err) => {
@@ -31,12 +43,27 @@ const connectDB = async () => {
       logger.warn("MongoDB disconnected");
     });
 
-    // Graceful shutdown
-    process.on("SIGINT", async () => {
-      await mongoose.connection.close();
-      logger.info("MongoDB connection closed through app termination");
-      process.exit(0);
+    mongoose.connection.on("reconnected", () => {
+      logger.info("MongoDB reconnected");
     });
+
+    // Graceful shutdown
+    const gracefulShutdown = async (signal) => {
+      logger.info(`${signal} received, closing MongoDB connection`);
+      try {
+        await connectionPool.drain();
+        logger.info("MongoDB connection closed through app termination");
+        process.exit(0);
+      } catch (error) {
+        logger.error("Error during MongoDB shutdown", {
+          error: error.message,
+        });
+        process.exit(1);
+      }
+    };
+
+    process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+    process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 
     return conn;
   } catch (error) {

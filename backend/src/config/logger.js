@@ -1,7 +1,9 @@
+// backend/src/config/logger.js
 import pino from "pino";
 import env from "./env.js";
+import crypto from "crypto";
 
-// Конфигурация транспортов
+// --- ТРАНСПОРТЫ ---
 const getTransport = () => {
   if (env.NODE_ENV === "development") {
     return {
@@ -11,12 +13,12 @@ const getTransport = () => {
         translateTime: "yyyy-mm-dd HH:MM:ss",
         ignore: "pid,hostname",
         singleLine: false,
-        messageFormat: "{levelLabel} - {msg}",
+        messageFormat: "{msg}",
+        levelFirst: true,
       },
     };
   }
 
-  // Production - JSON логи с ротацией
   return {
     target: "pino/file",
     options: {
@@ -26,11 +28,10 @@ const getTransport = () => {
   };
 };
 
-// Базовый logger
+// --- ОСНОВНОЙ ЛОГГЕР ---
 const logger = pino({
   level: env.NODE_ENV === "production" ? "info" : "debug",
 
-  // Serializers для правильного логирования объектов
   serializers: {
     req: (req) => ({
       method: req.method,
@@ -41,34 +42,26 @@ const logger = pino({
     }),
     res: (res) => ({
       statusCode: res.statusCode,
-      headers: res.getHeaders(),
+      headers: res.getHeaders?.() || {},
     }),
     err: pino.stdSerializers.err,
   },
 
-  // Добавление timestamp
   timestamp: pino.stdTimeFunctions.isoTime,
 
-  // Базовые поля
   base: {
     env: env.NODE_ENV,
-    pid: process.pid,
   },
 
-  // Форматирование уровней
-  formatters: {
-    level: (label) => {
-      return { level: label.toUpperCase() };
-    },
-  },
+  messageKey: "msg",
 
-  // Транспорт
   transport: getTransport(),
 });
 
-// Child logger с request ID для трейсинга
+// --- CHILD-LOGGERS ---
 export const createRequestLogger = (req) => {
   const requestId = req.id || crypto.randomUUID();
+
   return logger.child({
     requestId,
     userId: req.user?._id?.toString(),
@@ -76,18 +69,13 @@ export const createRequestLogger = (req) => {
   });
 };
 
-// Child logger для сервисов
-export const createServiceLogger = (serviceName) => {
-  return logger.child({ service: serviceName });
-};
+export const createServiceLogger = (service) => logger.child({ service });
 
-// Child logger для сокетов
-export const createSocketLogger = (socket) => {
-  return logger.child({
+export const createSocketLogger = (socket) =>
+  logger.child({
     socketId: socket.id,
     userId: socket.user?._id?.toString(),
     username: socket.user?.username,
   });
-};
 
 export default logger;

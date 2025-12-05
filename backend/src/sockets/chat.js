@@ -1,15 +1,41 @@
+// backend/src/sockets/chat.js
 import Message from "../models/Message.js";
 import User from "../models/User.js";
 import { verifyToken } from "../utils/token.js";
 import { createSocketLogger } from "../config/logger.js";
 import logger from "../config/logger.js";
 import DOMPurify from "isomorphic-dompurify";
+import {
+  MESSAGE_LIMITS,
+  SOCKET_EVENTS,
+  ERROR_CODES,
+} from "../utils/constants.js";
 
 class SocketManager {
   constructor() {
-    this.connectedUsers = new Map(); // userId -> socketId
-    this.typingUsers = new Map(); // socketId -> { username, timeoutId }
-    this.messageRateLimiter = new Map(); // socketId -> { count, resetTime }
+    this.connectedUsers = new Map();
+    this.typingUsers = new Map();
+    this.messageRateLimiter = new Map();
+    // ВАЖНО: Добавляем Set для отслеживания всех таймеров
+    this.activeTimeouts = new Set();
+  }
+
+  // Безопасное создание таймера с автоочисткой
+  createManagedTimeout(callback, delay) {
+    const timeoutId = setTimeout(() => {
+      this.activeTimeouts.delete(timeoutId);
+      callback();
+    }, delay);
+    this.activeTimeouts.add(timeoutId);
+    return timeoutId;
+  }
+
+  // Безопасная очистка таймера
+  clearManagedTimeout(timeoutId) {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      this.activeTimeouts.delete(timeoutId);
+    }
   }
 
   async authenticateSocket(socket, next) {
@@ -22,18 +48,18 @@ class SocketManager {
           ip: socket.handshake.address,
         });
         const error = new Error("Token required");
-        error.data = { code: "AUTH_TOKEN_REQUIRED" };
+        error.data = { code: ERROR_CODES.AUTH_TOKEN_REQUIRED };
         return next(error);
       }
 
       const decoded = verifyToken(token);
 
-      if (!decoded || !decoded.userId) {
+      if (!decoded?.userId) {
         logger.warn("Socket authentication failed: invalid token", {
           socketId: socket.id,
         });
         const error = new Error("Invalid token");
-        error.data = { code: "AUTH_INVALID_TOKEN" };
+        error.data = { code: ERROR_CODES.AUTH_INVALID_TOKEN };
         return next(error);
       }
 
@@ -47,7 +73,7 @@ class SocketManager {
           socketId: socket.id,
         });
         const error = new Error("User not found");
-        error.data = { code: "AUTH_USER_NOT_FOUND" };
+        error.data = { code: ERROR_CODES.AUTH_USER_NOT_FOUND };
         return next(error);
       }
 
@@ -60,7 +86,7 @@ class SocketManager {
         socketId: socket.id,
       });
       const err = new Error("Authentication error");
-      err.data = { code: "AUTH_ERROR" };
+      err.data = { code: ERROR_CODES.AUTH_ERROR };
       next(err);
     }
   }
@@ -73,7 +99,7 @@ class SocketManager {
     socketLogger.info("User connected");
 
     try {
-      // Отключаем предыдущее соединение если есть
+      // Отключаем предыдущее соединение
       const existingSocketId = this.connectedUsers.get(userId);
       if (existingSocketId && existingSocketId !== socket.id) {
         const existingSocket = io.sockets.sockets.get(existingSocketId);
@@ -81,26 +107,32 @@ class SocketManager {
           socketLogger.info("Disconnecting previous session", {
             oldSocketId: existingSocketId,
           });
+          // Очищаем ресурсы старого соединения перед disconnect
+          this.cleanupSocketResources(existingSocketId);
           existingSocket.disconnect(true);
         }
       }
 
-      // Обновляем статус в БД и мапу
-      await User.findByIdAndUpdate(user._id, {
-        isOnline: true,
-        lastSeen: Date.now(),
-        socketId: socket.id,
-      });
+      // Обновляем статус пользователя
+      await User.findByIdAndUpdate(
+        user._id,
+        {
+          isOnline: true,
+          lastSeen: Date.now(),
+          socketId: socket.id,
+        },
+        { new: true }
+      );
 
       this.connectedUsers.set(userId, socket.id);
 
-      // Отправляем список онлайн пользователей
+      // Отправляем обновлённый список пользователей
       await this.broadcastOnlineUsers(io);
 
-      // Отправляем историю сообщений
+      // Отправляем историю сообщений с обработкой ошибок
       try {
         const recentMessages = await Message.getRecent(50);
-        socket.emit("messages:history", recentMessages);
+        socket.emit(SOCKET_EVENTS.MESSAGES_HISTORY, recentMessages);
         socketLogger.debug("Message history sent", {
           count: recentMessages.length,
         });
@@ -108,25 +140,26 @@ class SocketManager {
         socketLogger.error("Failed to load message history", {
           error: error.message,
         });
+        socket.emit(SOCKET_EVENTS.ERROR, {
+          message: "Failed to load message history",
+          code: "HISTORY_LOAD_FAILED",
+        });
       }
 
-      // Обработчик отправки сообщения
-      socket.on("message:send", async (data) => {
+      // Регистрируем обработчики событий
+      socket.on(SOCKET_EVENTS.MESSAGE_SEND, async (data) => {
         await this.handleMessageSend(io, socket, data, socketLogger);
       });
 
-      // Обработчик начала набора
-      socket.on("typing:start", () => {
-        this.handleTypingStart(socket, socketLogger);
+      socket.on(SOCKET_EVENTS.TYPING_START, () => {
+        this.handleTypingStart(io, socket, socketLogger);
       });
 
-      // Обработчик окончания набора
-      socket.on("typing:stop", () => {
-        this.handleTypingStop(socket, socketLogger);
+      socket.on(SOCKET_EVENTS.TYPING_STOP, () => {
+        this.handleTypingStop(io, socket, socketLogger);
       });
 
-      // Обработчик отключения
-      socket.on("disconnect", async (reason) => {
+      socket.on(SOCKET_EVENTS.DISCONNECT, async (reason) => {
         await this.handleDisconnect(io, socket, reason, socketLogger);
       });
     } catch (error) {
@@ -138,11 +171,10 @@ class SocketManager {
     }
   }
 
-  // Rate limiting для сообщений
   checkMessageRateLimit(socketId) {
     const now = Date.now();
-    const limit = 10; // 10 сообщений
-    const window = 10000; // за 10 секунд
+    const limit = MESSAGE_LIMITS.RATE_LIMIT_COUNT;
+    const window = MESSAGE_LIMITS.RATE_LIMIT_WINDOW;
 
     if (!this.messageRateLimiter.has(socketId)) {
       this.messageRateLimiter.set(socketId, {
@@ -175,19 +207,19 @@ class SocketManager {
       // Rate limiting
       if (!this.checkMessageRateLimit(socket.id)) {
         socketLogger.warn("Message rate limit exceeded");
-        socket.emit("error", {
+        socket.emit(SOCKET_EVENTS.ERROR, {
           message: "Too many messages. Please slow down.",
-          code: "RATE_LIMIT_EXCEEDED",
+          code: ERROR_CODES.RATE_LIMIT_EXCEEDED,
         });
         return;
       }
 
-      // Валидация
-      if (!data || !data.text || typeof data.text !== "string") {
+      // Валидация входных данных
+      if (!data?.text || typeof data.text !== "string") {
         socketLogger.warn("Invalid message format", { data });
-        socket.emit("error", {
+        socket.emit(SOCKET_EVENTS.ERROR, {
           message: "Invalid message format",
-          code: "INVALID_FORMAT",
+          code: ERROR_CODES.INVALID_FORMAT,
         });
         return;
       }
@@ -195,30 +227,29 @@ class SocketManager {
       const text = data.text.trim();
 
       if (!text || text.length === 0) {
-        socket.emit("error", {
+        socket.emit(SOCKET_EVENTS.ERROR, {
           message: "Message cannot be empty",
-          code: "EMPTY_MESSAGE",
+          code: ERROR_CODES.EMPTY_MESSAGE,
         });
         return;
       }
 
-      if (text.length > 2000) {
-        socketLogger.warn("Message too long", {
-          length: text.length,
-        });
-        socket.emit("error", {
-          message: "Message too long (max 2000 characters)",
-          code: "MESSAGE_TOO_LONG",
+      if (text.length > MESSAGE_LIMITS.MAX_LENGTH) {
+        socketLogger.warn("Message too long", { length: text.length });
+        socket.emit(SOCKET_EVENTS.ERROR, {
+          message: `Message too long (max ${MESSAGE_LIMITS.MAX_LENGTH} characters)`,
+          code: ERROR_CODES.MESSAGE_TOO_LONG,
         });
         return;
       }
 
-      // Sanitize для защиты от XSS
+      // Sanitize текста
       const sanitizedText = DOMPurify.sanitize(text, {
         ALLOWED_TAGS: [],
         ALLOWED_ATTR: [],
       });
 
+      // Создание и сохранение сообщения
       const message = new Message({
         senderId: user._id,
         username: user.username,
@@ -228,14 +259,16 @@ class SocketManager {
 
       await message.save();
 
-      // Отправляем всем подключённым клиентам
-      io.emit("message:new", {
+      // Broadcast нового сообщения
+      const messageData = {
         _id: message._id,
         senderId: message.senderId,
         username: message.username,
         text: message.text,
         timestamp: message.timestamp,
-      });
+      };
+
+      io.emit(SOCKET_EVENTS.MESSAGE_NEW, messageData);
 
       socketLogger.debug("Message sent", {
         messageId: message._id.toString(),
@@ -247,25 +280,25 @@ class SocketManager {
         stack: error.stack,
       });
 
-      socket.emit("error", {
+      socket.emit(SOCKET_EVENTS.ERROR, {
         message: "Failed to send message",
-        code: "MESSAGE_SEND_FAILED",
+        code: ERROR_CODES.MESSAGE_SEND_FAILED,
       });
     }
   }
 
-  handleTypingStart(socket, socketLogger) {
+  handleTypingStart(io, socket, socketLogger) {
     const user = socket.user;
 
-    // Очищаем предыдущий таймаут если есть
+    // Очищаем предыдущий таймаут
     const existing = this.typingUsers.get(socket.id);
     if (existing?.timeoutId) {
-      clearTimeout(existing.timeoutId);
+      this.clearManagedTimeout(existing.timeoutId);
     }
 
-    // Устанавливаем новый таймаут (автоматическая остановка через 3 сек)
-    const timeoutId = setTimeout(() => {
-      this.handleTypingStop(socket, socketLogger);
+    // Создаём управляемый таймаут
+    const timeoutId = this.createManagedTimeout(() => {
+      this.handleTypingStop(io, socket, socketLogger);
     }, 3000);
 
     this.typingUsers.set(socket.id, {
@@ -273,29 +306,40 @@ class SocketManager {
       timeoutId,
     });
 
-    socket.broadcast.emit("user:typing", {
+    socket.broadcast.emit(SOCKET_EVENTS.USER_TYPING, {
       username: user.username,
     });
 
     socketLogger.debug("User started typing");
   }
 
-  handleTypingStop(socket, socketLogger) {
+  handleTypingStop(io, socket, socketLogger) {
     const user = socket.user;
     const existing = this.typingUsers.get(socket.id);
 
     if (existing) {
-      if (existing.timeoutId) {
-        clearTimeout(existing.timeoutId);
-      }
+      this.clearManagedTimeout(existing.timeoutId);
       this.typingUsers.delete(socket.id);
 
-      socket.broadcast.emit("user:stopped-typing", {
+      socket.broadcast.emit(SOCKET_EVENTS.USER_STOPPED_TYPING, {
         username: user.username,
       });
 
       socketLogger.debug("User stopped typing");
     }
+  }
+
+  // НОВЫЙ МЕТОД: Централизованная очистка ресурсов сокета
+  cleanupSocketResources(socketId) {
+    // Очищаем typing таймаут
+    const typingData = this.typingUsers.get(socketId);
+    if (typingData?.timeoutId) {
+      this.clearManagedTimeout(typingData.timeoutId);
+      this.typingUsers.delete(socketId);
+    }
+
+    // Очищаем rate limiter
+    this.messageRateLimiter.delete(socketId);
   }
 
   async handleDisconnect(io, socket, reason, socketLogger) {
@@ -304,28 +348,25 @@ class SocketManager {
 
     socketLogger.info("User disconnected", { reason });
 
-    // КРИТИЧЕСКИ ВАЖНО: Очищаем typing таймаут
-    const typingData = this.typingUsers.get(socket.id);
-    if (typingData?.timeoutId) {
-      clearTimeout(typingData.timeoutId);
-      this.typingUsers.delete(socket.id);
-    }
-
-    // Очищаем rate limiter
-    this.messageRateLimiter.delete(socket.id);
+    // Очистка ресурсов сокета
+    this.cleanupSocketResources(socket.id);
 
     try {
-      // Обновляем статус в БД
-      await User.findByIdAndUpdate(user._id, {
-        isOnline: false,
-        lastSeen: Date.now(),
-        socketId: null,
-      });
+      // Обновляем статус пользователя
+      await User.findByIdAndUpdate(
+        user._id,
+        {
+          isOnline: false,
+          lastSeen: Date.now(),
+          socketId: null,
+        },
+        { new: true }
+      );
 
-      // Удаляем из мапы
+      // Удаляем из мапы подключенных пользователей
       this.connectedUsers.delete(userId);
 
-      // Отправляем обновлённый список онлайн пользователей
+      // Broadcast обновлённого списка
       await this.broadcastOnlineUsers(io);
     } catch (error) {
       socketLogger.error("Error updating user status on disconnect", {
@@ -337,7 +378,7 @@ class SocketManager {
   async broadcastOnlineUsers(io) {
     try {
       const onlineUsers = await User.getOnlineUsers();
-      io.emit("users:online", onlineUsers);
+      io.emit(SOCKET_EVENTS.USERS_ONLINE, onlineUsers);
       logger.debug("Online users broadcasted", {
         count: onlineUsers.length,
       });
@@ -353,14 +394,22 @@ class SocketManager {
     io.use((socket, next) => this.authenticateSocket(socket, next));
 
     // Обработчик подключения
-    io.on("connection", (socket) => this.handleConnection(io, socket));
+    io.on(SOCKET_EVENTS.CONNECT, (socket) => this.handleConnection(io, socket));
 
     logger.info("Socket.IO initialized");
   }
 
-  // Полная очистка всех ресурсов
+  // УЛУЧШЕННЫЙ cleanup с очисткой всех таймеров
   cleanup() {
-    // Очищаем все typing таймауты
+    logger.info("Cleaning up socket manager resources");
+
+    // Очищаем все активные таймеры
+    this.activeTimeouts.forEach((timeoutId) => {
+      clearTimeout(timeoutId);
+    });
+    this.activeTimeouts.clear();
+
+    // Очищаем typing таймауты (double check)
     this.typingUsers.forEach((value) => {
       if (value.timeoutId) {
         clearTimeout(value.timeoutId);
@@ -371,7 +420,7 @@ class SocketManager {
     this.connectedUsers.clear();
     this.messageRateLimiter.clear();
 
-    logger.info("Socket manager cleaned up");
+    logger.info("Socket manager cleanup completed");
   }
 }
 

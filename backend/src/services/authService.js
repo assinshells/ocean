@@ -1,3 +1,4 @@
+// backend/src/services/authService.js
 import User from "../models/User.js";
 import {
   generateToken,
@@ -12,55 +13,48 @@ const logger = createServiceLogger("AuthService");
 class AuthService {
   async register({ username, password, email }) {
     const startTime = Date.now();
+    let session = null;
 
     try {
-      // Используем транзакцию для атомарности
-      const session = await User.startSession();
-
-      try {
-        await session.withTransaction(async () => {
-          // Проверка на существование с блокировкой
-          const existingUser = await User.findOne({ username }).session(
-            session
-          );
-          if (existingUser) {
-            throw ApiError.conflict(
-              "Пользователь с таким именем уже существует"
-            );
-          }
-
-          if (email) {
-            const existingEmail = await User.findOne({ email }).session(
-              session
-            );
-            if (existingEmail) {
-              throw ApiError.conflict("Email уже используется");
-            }
-          }
-
-          const user = new User({ username, password, email });
-          await user.save({ session });
-
-          const token = generateToken(user._id);
-
-          logger.info("User registered successfully", {
-            userId: user._id.toString(),
-            username: user.username,
-            duration: Date.now() - startTime,
-          });
-
-          return { token, user: user.toJSON() };
-        });
-      } finally {
-        await session.endSession();
+      // Проверка на существование пользователя БЕЗ транзакции
+      const existingUser = await User.findOne({ username }).lean();
+      if (existingUser) {
+        throw ApiError.conflict("Пользователь с таким именем уже существует");
       }
+
+      if (email) {
+        const existingEmail = await User.findOne({ email }).lean();
+        if (existingEmail) {
+          throw ApiError.conflict("Email уже используется");
+        }
+      }
+
+      // Создаём пользователя (хеширование пароля происходит в pre-save hook)
+      const user = new User({ username, password, email });
+      await user.save();
+
+      const token = generateToken(user._id);
+
+      logger.info({
+        msg: "User registered successfully",
+        userId: user._id.toString(),
+        username: user.username,
+        duration: Date.now() - startTime,
+      });
+
+      return { token, user: user.toJSON() };
     } catch (error) {
-      logger.error("Registration failed", {
+      logger.error({
+        msg: "Registration failed",
         error: error.message,
         username,
         duration: Date.now() - startTime,
       });
       throw error;
+    } finally {
+      if (session) {
+        await session.endSession();
+      }
     }
   }
 
@@ -68,18 +62,23 @@ class AuthService {
     const startTime = Date.now();
 
     try {
-      // Используем .select('+password') для получения пароля
+      // Получаем пользователя с паролем
       const user = await User.findOne({ username }).select("+password");
 
-      if (!user) {
-        logger.warn("Login failed: user not found", { username });
+      if (!user || !(await user.comparePassword(password))) {
+        logger.warn({
+          msg: "Login failed",
+          username,
+        });
+        // Используем одинаковое сообщение для защиты от user enumeration
         throw ApiError.unauthorized("Неверное имя пользователя или пароль");
       }
 
       const isMatch = await user.comparePassword(password);
 
       if (!isMatch) {
-        logger.warn("Login failed: invalid password", {
+        logger.warn({
+          msg: "Login failed: invalid password",
           userId: user._id.toString(),
           username,
         });
@@ -88,21 +87,21 @@ class AuthService {
 
       const token = generateToken(user._id);
 
-      logger.info("User logged in successfully", {
+      logger.info({
+        msg: "User logged in successfully",
         userId: user._id.toString(),
         username: user.username,
         duration: Date.now() - startTime,
       });
 
       // Убираем пароль перед возвратом
-      user.password = undefined;
+      const userObject = user.toObject();
+      delete userObject.password;
 
-      return {
-        token,
-        user: user.toJSON(),
-      };
+      return { token, user: userObject };
     } catch (error) {
-      logger.error("Login failed", {
+      logger.error({
+        msg: "Login failed",
         error: error.message,
         username,
         duration: Date.now() - startTime,
@@ -113,10 +112,10 @@ class AuthService {
 
   async verifyToken(userId) {
     try {
-      const user = await User.findById(userId).select("-password");
+      const user = await User.findById(userId).select("-password").lean();
 
       if (!user) {
-        logger.warn("Token verification failed: user not found", { userId });
+        logger.warn({ userId }, "Token verification failed: user not found");
         throw ApiError.unauthorized("Пользователь не найден");
       }
 
@@ -125,7 +124,7 @@ class AuthService {
         username: user.username,
       });
 
-      return user.toJSON();
+      return user;
     } catch (error) {
       logger.error("Token verification failed", {
         error: error.message,
@@ -145,13 +144,14 @@ class AuthService {
 
       if (!user) {
         logger.warn("Forgot password: user not found", { email });
+        // Для безопасности возвращаем успех даже если user не найден
         throw ApiError.notFound("Пользователь с таким email не найден");
       }
 
       const resetToken = generateResetToken();
       const hashedToken = hashResetToken(resetToken);
 
-      user.resetPasswordToken = hashedToken; // Храним хеш, а не открытый токен!
+      user.resetPasswordToken = hashedToken;
       user.resetPasswordExpires = Date.now() + 3600000; // 1 час
       await user.save();
 
@@ -161,7 +161,7 @@ class AuthService {
         duration: Date.now() - startTime,
       });
 
-      return resetToken; // Возвращаем открытый токен для отправки по email
+      return resetToken;
     } catch (error) {
       logger.error("Forgot password failed", {
         error: error.message,
@@ -181,7 +181,7 @@ class AuthService {
       const user = await User.findOne({
         resetPasswordToken: hashedToken,
         resetPasswordExpires: { $gt: Date.now() },
-      }).select("+resetPasswordToken +resetPasswordExpires");
+      }).select("+resetPasswordToken +resetPasswordExpires +password");
 
       if (!user) {
         logger.warn("Password reset failed: invalid or expired token");
@@ -198,7 +198,10 @@ class AuthService {
         duration: Date.now() - startTime,
       });
 
-      return user.toJSON();
+      const userObject = user.toObject();
+      delete userObject.password;
+
+      return userObject;
     } catch (error) {
       logger.error("Password reset failed", {
         error: error.message,
