@@ -80,13 +80,14 @@ class ErrorHandlerService {
 
   logError(err, req) {
     const logLevel = err.statusCode >= 500 ? "error" : "warn";
+    const reqLogger = req.logger || logger;
 
-    // ИСПРАВЛЕНО: используем правильный формат с msg
-    req.logger[logLevel]({
-      msg: "Error occurred",
+    // ✅ ИСПРАВЛЕНО: используем правильный формат Pino
+    const logData = {
+      msg: `${err.statusCode} - ${err.message}`,
       err: {
         message: err.message,
-        stack: process.env.NODE_ENV === "development" ? err.stack : undefined,
+        stack: err.stack,
         name: err.name,
         code: err.code,
         statusCode: err.statusCode,
@@ -99,13 +100,25 @@ class ErrorHandlerService {
         ip: req.ip,
         userAgent: req.headers["user-agent"],
       },
-      user: req.user
-        ? {
-            id: req.user._id?.toString(),
-            username: req.user.username,
-          }
-        : undefined,
-    });
+    };
+
+    // Добавляем информацию о пользователе, если есть
+    if (req.user) {
+      logData.user = {
+        id: req.user._id?.toString(),
+        username: req.user.username,
+      };
+    }
+
+    reqLogger[logLevel](logData);
+
+    // ✅ НОВОЕ: В production дополнительно логируем критические ошибки в отдельный файл
+    if (process.env.NODE_ENV === "production" && err.statusCode >= 500) {
+      logger.fatal({
+        msg: "Critical error occurred",
+        ...logData,
+      });
+    }
   }
 
   formatErrorResponse(err, includeStack = false) {
@@ -118,6 +131,9 @@ class ErrorHandlerService {
     if (includeStack && err.stack) {
       response.stack = err.stack;
     }
+
+    // ✅ НОВОЕ: Добавляем timestamp для отладки
+    response.timestamp = new Date().toISOString();
 
     return response;
   }

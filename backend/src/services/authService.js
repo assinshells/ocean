@@ -7,16 +7,15 @@ import {
 } from "../utils/token.js";
 import ApiError from "../utils/ApiError.js";
 import { createServiceLogger } from "../config/logger.js";
+import errorLogger from "../utils/errorLogger.js"; 
 
 const logger = createServiceLogger("AuthService");
 
 class AuthService {
   async register({ username, password, email }) {
     const startTime = Date.now();
-    let session = null;
 
     try {
-      // Проверка на существование пользователя БЕЗ транзакции
       const existingUser = await User.findOne({ username }).lean();
       if (existingUser) {
         throw ApiError.conflict("Пользователь с таким именем уже существует");
@@ -29,7 +28,6 @@ class AuthService {
         }
       }
 
-      // Создаём пользователя (хеширование пароля происходит в pre-save hook)
       const user = new User({ username, password, email });
       await user.save();
 
@@ -44,6 +42,15 @@ class AuthService {
 
       return { token, user: user.toJSON() };
     } catch (error) {
+      // ✅ НОВОЕ: Используем errorLogger
+      errorLogger.logAuthError(
+        {
+          type: "registration",
+          username,
+        },
+        error
+      );
+
       logger.error({
         msg: "Registration failed",
         error: error.message,
@@ -51,10 +58,6 @@ class AuthService {
         duration: Date.now() - startTime,
       });
       throw error;
-    } finally {
-      if (session) {
-        await session.endSession();
-      }
     }
   }
 
@@ -62,27 +65,42 @@ class AuthService {
     const startTime = Date.now();
 
     try {
-      // Получаем пользователя с паролем
       const user = await User.findOne({ username }).select("+password");
 
-      if (!user || !(await user.comparePassword(password))) {
-        logger.warn({
-          msg: "Login failed",
-          username,
-        });
-        // Используем одинаковое сообщение для защиты от user enumeration
-        throw ApiError.unauthorized("Неверное имя пользователя или пароль");
+      if (!user) {
+        // ✅ НОВОЕ: Логируем попытку входа с несуществующим пользователем
+        errorLogger.logAuthError(
+          {
+            type: "login",
+            username,
+            reason: "user_not_found",
+          },
+          new Error("User not found")
+        );
+
+        throw ApiError.unauthorized("Incorrect username or password");
       }
 
       const isMatch = await user.comparePassword(password);
 
       if (!isMatch) {
+        // ✅ НОВОЕ: Логируем неверный пароль
+        errorLogger.logAuthError(
+          {
+            type: "login",
+            username,
+            reason: "invalid_password",
+          },
+          new Error("Invalid password")
+        );
+
         logger.warn({
           msg: "Login failed: invalid password",
           userId: user._id.toString(),
           username,
         });
-        throw ApiError.unauthorized("Неверное имя пользователя или пароль");
+
+        throw ApiError.unauthorized("Incorrect username or password");
       }
 
       const token = generateToken(user._id);
@@ -94,7 +112,6 @@ class AuthService {
         duration: Date.now() - startTime,
       });
 
-      // Убираем пароль перед возвратом
       const userObject = user.toObject();
       delete userObject.password;
 
@@ -115,7 +132,7 @@ class AuthService {
       const user = await User.findById(userId).select("-password").lean();
 
       if (!user) {
-        logger.warn({ userId }, "Token verification failed: user not found");
+        logger.warn("Token verification failed: user not found", { userId });
         throw ApiError.unauthorized("Пользователь не найден");
       }
 
@@ -144,7 +161,6 @@ class AuthService {
 
       if (!user) {
         logger.warn("Forgot password: user not found", { email });
-        // Для безопасности возвращаем успех даже если user не найден
         throw ApiError.notFound("Пользователь с таким email не найден");
       }
 
@@ -152,7 +168,7 @@ class AuthService {
       const hashedToken = hashResetToken(resetToken);
 
       user.resetPasswordToken = hashedToken;
-      user.resetPasswordExpires = Date.now() + 3600000; // 1 час
+      user.resetPasswordExpires = Date.now() + 3600000;
       await user.save();
 
       logger.info("Password reset requested", {

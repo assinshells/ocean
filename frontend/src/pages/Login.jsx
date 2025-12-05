@@ -1,3 +1,4 @@
+// frontend/src/pages/Login.jsx
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
@@ -11,6 +12,8 @@ const Login = () => {
 
     const handleChange = (e) => {
         setFormData({ ...formData, [e.target.name]: e.target.value });
+        // ✅ Очищаем ошибку при изменении полей
+        if (error) setError('');
     };
 
     const handleSubmit = async (e) => {
@@ -19,11 +22,22 @@ const Login = () => {
         setLoading(true);
 
         try {
-            await login(formData);
-            navigate('/chat');
+            // ✅ login теперь возвращает объект с error, а не пробрасывает исключение
+            const result = await login(formData);
+            
+            if (result.error) {
+                // ✅ Ошибка обрабатывается без refresh
+                setError(result.error);
+                setLoading(false);
+                return;
+            }
+
+            // ✅ Успешный вход - переходим в чат
+            navigate('/chat', { replace: true });
         } catch (err) {
-            setError(err.response?.data?.message || 'Ошибка входа');
-        } finally {
+            // ✅ Fallback на случай неожиданных ошибок
+            console.error('Login error:', err);
+            setError('Произошла непредвиденная ошибка');
             setLoading(false);
         }
     };
@@ -39,35 +53,50 @@ const Login = () => {
                             </h2>
 
                             {error && (
-                                <div className="alert alert-danger" role="alert">
+                                <div className="alert alert-danger alert-dismissible fade show" role="alert">
+                                    <i className="bi bi-exclamation-triangle-fill me-2"></i>
                                     {error}
+                                    <button
+                                        type="button"
+                                        className="btn-close"
+                                        onClick={() => setError('')}
+                                        aria-label="Close"
+                                    ></button>
                                 </div>
                             )}
 
                             <form onSubmit={handleSubmit}>
                                 <div className="mb-3">
-                                    <label htmlFor="username" className="form-label">Имя пользователя</label>
+                                    <label htmlFor="username" className="form-label">
+                                        Имя пользователя
+                                    </label>
                                     <input
                                         type="text"
-                                        className="form-control"
+                                        className={`form-control ${error ? 'is-invalid' : ''}`}
                                         id="username"
                                         name="username"
                                         value={formData.username}
                                         onChange={handleChange}
+                                        disabled={loading}
                                         required
+                                        autoComplete="username"
                                     />
                                 </div>
 
                                 <div className="mb-3">
-                                    <label htmlFor="password" className="form-label">Пароль</label>
+                                    <label htmlFor="password" className="form-label">
+                                        Пароль
+                                    </label>
                                     <input
                                         type="password"
-                                        className="form-control"
+                                        className={`form-control ${error ? 'is-invalid' : ''}`}
                                         id="password"
                                         name="password"
                                         value={formData.password}
                                         onChange={handleChange}
+                                        disabled={loading}
                                         required
+                                        autoComplete="current-password"
                                     />
                                 </div>
 
@@ -76,7 +105,14 @@ const Login = () => {
                                     className="btn btn-primary w-100 mb-3"
                                     disabled={loading}
                                 >
-                                    {loading ? 'Вход...' : 'Войти'}
+                                    {loading ? (
+                                        <>
+                                            <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                                            Вход...
+                                        </>
+                                    ) : (
+                                        'Войти'
+                                    )}
                                 </button>
 
                                 <div className="text-center">

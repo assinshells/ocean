@@ -1,3 +1,4 @@
+// frontend/src/pages/Register.jsx
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
@@ -15,6 +16,7 @@ const Register = () => {
 
     const handleChange = (e) => {
         setFormData({ ...formData, [e.target.name]: e.target.value });
+        if (error) setError('');
     };
 
     const handleSubmit = async (e) => {
@@ -23,11 +25,18 @@ const Register = () => {
         setLoading(true);
 
         try {
-            await register(formData);
-            navigate('/chat');
+            const result = await register(formData);
+            
+            if (result.error) {
+                setError(result.error);
+                setLoading(false);
+                return;
+            }
+
+            navigate('/chat', { replace: true });
         } catch (err) {
-            setError(err.response?.data?.message || 'Ошибка регистрации');
-        } finally {
+            console.error('Registration error:', err);
+            setError('Произошла непредвиденная ошибка');
             setLoading(false);
         }
     };
@@ -43,23 +52,41 @@ const Register = () => {
                             </h2>
 
                             {error && (
-                                <div className="alert alert-danger" role="alert">
+                                <div className="alert alert-danger alert-dismissible fade show" role="alert">
+                                    <i className="bi bi-exclamation-triangle-fill me-2"></i>
                                     {error}
+                                    <button
+                                        type="button"
+                                        className="btn-close"
+                                        onClick={() => setError('')}
+                                        aria-label="Close"
+                                    ></button>
                                 </div>
                             )}
 
                             <form onSubmit={handleSubmit}>
                                 <div className="mb-3">
-                                    <label htmlFor="username" className="form-label">Имя пользователя</label>
+                                    <label htmlFor="username" className="form-label">
+                                        Имя пользователя
+                                    </label>
                                     <input
                                         type="text"
-                                        className="form-control"
+                                        className={`form-control ${error ? 'is-invalid' : ''}`}
                                         id="username"
                                         name="username"
                                         value={formData.username}
                                         onChange={handleChange}
+                                        disabled={loading}
                                         required
+                                        minLength={3}
+                                        maxLength={30}
+                                        pattern="[a-zA-Z0-9_]+"
+                                        title="Только буквы, цифры и подчёркивание"
+                                        autoComplete="username"
                                     />
+                                    <div className="form-text">
+                                        От 3 до 30 символов (буквы, цифры, подчёркивание)
+                                    </div>
                                 </div>
 
                                 <div className="mb-3">
@@ -73,20 +100,30 @@ const Register = () => {
                                         name="email"
                                         value={formData.email}
                                         onChange={handleChange}
+                                        disabled={loading}
+                                        autoComplete="email"
                                     />
                                 </div>
 
                                 <div className="mb-3">
-                                    <label htmlFor="password" className="form-label">Пароль</label>
+                                    <label htmlFor="password" className="form-label">
+                                        Пароль
+                                    </label>
                                     <input
                                         type="password"
-                                        className="form-control"
+                                        className={`form-control ${error ? 'is-invalid' : ''}`}
                                         id="password"
                                         name="password"
                                         value={formData.password}
                                         onChange={handleChange}
+                                        disabled={loading}
                                         required
+                                        minLength={6}
+                                        autoComplete="new-password"
                                     />
+                                    <div className="form-text">
+                                        Минимум 6 символов
+                                    </div>
                                 </div>
 
                                 <button
@@ -94,7 +131,14 @@ const Register = () => {
                                     className="btn btn-primary w-100 mb-3"
                                     disabled={loading}
                                 >
-                                    {loading ? 'Регистрация...' : 'Зарегистрироваться'}
+                                    {loading ? (
+                                        <>
+                                            <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                                            Регистрация...
+                                        </>
+                                    ) : (
+                                        'Зарегистрироваться'
+                                    )}
                                 </button>
 
                                 <hr />

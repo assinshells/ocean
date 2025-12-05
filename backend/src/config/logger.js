@@ -1,7 +1,18 @@
 // backend/src/config/logger.js
 import pino from "pino";
+import path from "path";
+import { fileURLToPath } from "url";
+import fs from "fs";
 import env from "./env.js";
 import crypto from "crypto";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const LOG_DIR = path.resolve(__dirname, "../../logs");
+
+// Гарантируем существование директории логов
+if (!fs.existsSync(LOG_DIR)) {
+  fs.mkdirSync(LOG_DIR, { recursive: true });
+}
 
 // --- ТРАНСПОРТЫ ---
 const getTransport = () => {
@@ -19,10 +30,11 @@ const getTransport = () => {
     };
   }
 
+  // Production: пишем в файл
   return {
     target: "pino/file",
     options: {
-      destination: "./logs/app.log",
+      destination: path.join(LOG_DIR, "app.log"),
       mkdir: true,
     },
   };
@@ -36,13 +48,15 @@ const logger = pino({
     req: (req) => ({
       method: req.method,
       url: req.url,
-      headers: req.headers,
+      headers: {
+        host: req.headers.host,
+        "user-agent": req.headers["user-agent"],
+      },
       remoteAddress: req.ip,
       remotePort: req.connection?.remotePort,
     }),
     res: (res) => ({
       statusCode: res.statusCode,
-      headers: res.getHeaders?.() || {},
     }),
     err: pino.stdSerializers.err,
   },
@@ -51,11 +65,19 @@ const logger = pino({
 
   base: {
     env: env.NODE_ENV,
+    pid: process.pid,
   },
 
   messageKey: "msg",
 
   transport: getTransport(),
+
+  // Опции для форматирования
+  formatters: {
+    level: (label) => {
+      return { level: label.toUpperCase() };
+    },
+  },
 });
 
 // --- CHILD-LOGGERS ---
@@ -77,5 +99,12 @@ export const createSocketLogger = (socket) =>
     userId: socket.user?._id?.toString(),
     username: socket.user?.username,
   });
+
+// Логируем старт приложения
+logger.info({
+  msg: "Logger initialized",
+  logDir: LOG_DIR,
+  level: logger.level,
+});
 
 export default logger;
