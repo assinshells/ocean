@@ -7,7 +7,7 @@ import {
 } from "../utils/token.js";
 import ApiError from "../utils/ApiError.js";
 import { createServiceLogger } from "../config/logger.js";
-import errorLogger from "../utils/errorLogger.js"; 
+import errorLogger from "../utils/errorLogger.js";
 
 const logger = createServiceLogger("AuthService");
 
@@ -42,7 +42,6 @@ class AuthService {
 
       return { token, user: user.toJSON() };
     } catch (error) {
-      // ✅ НОВОЕ: Используем errorLogger
       errorLogger.logAuthError(
         {
           type: "registration",
@@ -68,7 +67,7 @@ class AuthService {
       const user = await User.findOne({ username }).select("+password");
 
       if (!user) {
-        // ✅ НОВОЕ: Логируем попытку входа с несуществующим пользователем
+        // ✅ УЛУЧШЕНО: Более детальное логирование
         errorLogger.logAuthError(
           {
             type: "login",
@@ -78,13 +77,17 @@ class AuthService {
           new Error("User not found")
         );
 
+        // ✅ ВАЖНО: НЕ выбрасываем ошибку сразу, чтобы избежать timing attack
+        // Имитируем задержку сравнения пароля
+        await new Promise((resolve) => setTimeout(resolve, 100));
+
         throw ApiError.unauthorized("Incorrect username or password");
       }
 
       const isMatch = await user.comparePassword(password);
 
       if (!isMatch) {
-        // ✅ НОВОЕ: Логируем неверный пароль
+        // ✅ УЛУЧШЕНО: Логируем неверный пароль
         errorLogger.logAuthError(
           {
             type: "login",
@@ -98,6 +101,7 @@ class AuthService {
           msg: "Login failed: invalid password",
           userId: user._id.toString(),
           username,
+          duration: Date.now() - startTime,
         });
 
         throw ApiError.unauthorized("Incorrect username or password");
@@ -117,12 +121,15 @@ class AuthService {
 
       return { token, user: userObject };
     } catch (error) {
-      logger.error({
-        msg: "Login failed",
-        error: error.message,
-        username,
-        duration: Date.now() - startTime,
-      });
+      // ✅ УЛУЧШЕНО: Логируем только если ещё не залогировано
+      if (!(error instanceof ApiError)) {
+        logger.error({
+          msg: "Login failed with unexpected error",
+          error: error.message,
+          username,
+          duration: Date.now() - startTime,
+        });
+      }
       throw error;
     }
   }

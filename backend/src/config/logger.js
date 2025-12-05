@@ -45,19 +45,34 @@ const logger = pino({
   level: env.NODE_ENV === "production" ? "info" : "debug",
 
   serializers: {
-    req: (req) => ({
-      method: req.method,
-      url: req.url,
-      headers: {
-        host: req.headers.host,
-        "user-agent": req.headers["user-agent"],
-      },
-      remoteAddress: req.ip,
-      remotePort: req.connection?.remotePort,
-    }),
-    res: (res) => ({
-      statusCode: res.statusCode,
-    }),
+    // ✅ ИСПРАВЛЕНО: Безопасный сериализатор req
+    req: (req) => {
+      if (!req) return {};
+
+      return {
+        method: req.method,
+        url: req.url || req.originalUrl,
+        headers: req.headers
+          ? {
+              host: req.headers.host,
+              "user-agent": req.headers["user-agent"],
+            }
+          : {},
+        remoteAddress: req.ip,
+        remotePort: req.connection?.remotePort,
+      };
+    },
+
+    // ✅ ИСПРАВЛЕНО: Безопасный сериализатор res
+    res: (res) => {
+      if (!res) return {};
+
+      return {
+        statusCode: res.statusCode,
+      };
+    },
+
+    // ✅ Стандартный сериализатор ошибок
     err: pino.stdSerializers.err,
   },
 
@@ -93,12 +108,17 @@ export const createRequestLogger = (req) => {
 
 export const createServiceLogger = (service) => logger.child({ service });
 
-export const createSocketLogger = (socket) =>
-  logger.child({
+export const createSocketLogger = (socket) => {
+  if (!socket) {
+    return logger.child({ socketId: "unknown" });
+  }
+
+  return logger.child({
     socketId: socket.id,
     userId: socket.user?._id?.toString(),
     username: socket.user?.username,
   });
+};
 
 // Логируем старт приложения
 logger.info({

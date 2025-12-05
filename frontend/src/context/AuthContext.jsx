@@ -1,4 +1,3 @@
-// frontend/src/context/AuthContext.jsx
 import {
   createContext,
   useState,
@@ -17,34 +16,66 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-
-  // ✅ НОВОЕ: состояние подключения Socket
   const [socketConnected, setSocketConnected] = useState(false);
 
   const initPromiseRef = useRef(null);
   const isMountedRef = useRef(true);
 
-  // ✅ НОВОЕ: Слушатель состояния Socket
+  // ✅ ИСПРАВЛЕНО: Слушатель состояния Socket с принудительной проверкой
   useEffect(() => {
     const handleConnect = () => {
       logger.info("Socket connected in AuthContext");
-      setSocketConnected(true);
+      if (isMountedRef.current) {
+        setSocketConnected(true);
+      }
     };
 
     const handleDisconnect = () => {
       logger.warn("Socket disconnected in AuthContext");
-      setSocketConnected(false);
+      if (isMountedRef.current) {
+        setSocketConnected(false);
+      }
+    };
+
+    const handleConnectError = (error) => {
+      logger.error("Socket connection error in AuthContext", {
+        error: error?.message || "Unknown error"
+      });
+      if (isMountedRef.current) {
+        setSocketConnected(false);
+      }
     };
 
     socketService.on("connect", handleConnect);
     socketService.on("disconnect", handleDisconnect);
+    socketService.on("connect_error", handleConnectError);
 
-    // Проверяем текущее состояние
-    setSocketConnected(socketService.isConnected());
+    // ✅ НОВОЕ: Периодическая проверка состояния Socket (на случай race condition)
+    const checkInterval = setInterval(() => {
+      if (isMountedRef.current) {
+        const isConnected = socketService.isConnected();
+        setSocketConnected(prev => {
+          if (prev !== isConnected) {
+            logger.debug("Socket state synchronized", {
+              wasConnected: prev,
+              nowConnected: isConnected
+            });
+          }
+          return isConnected;
+        });
+      }
+    }, 1000); // Проверяем каждую секунду
+
+    // Проверяем текущее состояние сразу
+    if (isMountedRef.current) {
+      setSocketConnected(socketService.isConnected());
+    }
 
     return () => {
+      clearInterval(checkInterval);
       socketService.off("connect", handleConnect);
       socketService.off("disconnect", handleDisconnect);
+      socketService.off("connect_error", handleConnectError);
     };
   }, []);
 
@@ -68,32 +99,30 @@ export const AuthProvider = ({ children }) => {
         if (!isMountedRef.current) return;
 
         setUser(userData);
-        
-        // ✅ Подключаем Socket и ждём подключения
-        socketService.connect(token);
-        
-        // ✅ Даём Socket время на подключение
-        await new Promise((resolve) => {
-          if (socketService.isConnected()) {
-            resolve();
-          } else {
-            const checkConnection = () => {
-              if (socketService.isConnected()) {
-                socketService.off("connect", checkConnection);
-                resolve();
-              }
-            };
-            socketService.on("connect", checkConnection);
-            
-            // Timeout на случай проблем
-            setTimeout(() => {
-              socketService.off("connect", checkConnection);
-              resolve();
-            }, 5000);
-          }
-        });
 
-        logger.info("User authenticated", { username: userData.username });
+        try {
+          await socketService.connect(token);
+
+          // ✅ НОВОЕ: Принудительная синхронизация состояния после подключения
+          if (isMountedRef.current) {
+            setSocketConnected(socketService.isConnected());
+          }
+
+          logger.info("User authenticated and socket connected", {
+            username: userData.username,
+            socketConnected: socketService.isConnected()
+          });
+        } catch (socketError) {
+          logger.error("Socket connection failed during init", {
+            error: socketError.message
+          });
+
+          // ✅ НОВОЕ: Синхронизация состояния даже при ошибке
+          if (isMountedRef.current) {
+            setSocketConnected(socketService.isConnected());
+          }
+        }
+
       } catch (err) {
         logger.error("Token verification failed", { error: err.message });
 
@@ -135,17 +164,36 @@ export const AuthProvider = ({ children }) => {
       localStorage.setItem("user", JSON.stringify(userData));
 
       setUser(userData);
-      socketService.connect(token);
 
-      logger.info("User logged in", { username: userData.username });
+      try {
+        await socketService.connect(token);
 
-      return response.data;
+        // ✅ НОВОЕ: Принудительная синхронизация состояния
+        if (isMountedRef.current) {
+          setSocketConnected(socketService.isConnected());
+        }
+
+        logger.info("User logged in and socket connected", {
+          username: userData.username,
+          socketConnected: socketService.isConnected()
+        });
+      } catch (socketError) {
+        logger.error("Socket connection failed during login", {
+          error: socketError.message
+        });
+
+        // ✅ НОВОЕ: Синхронизация состояния даже при ошибке
+        if (isMountedRef.current) {
+          setSocketConnected(socketService.isConnected());
+        }
+      }
+
+      return { success: true, data: response.data };
     } catch (err) {
       const errorMsg = err.response?.data?.message || "Login failed";
       setError(errorMsg);
       logger.error("Login failed", { error: errorMsg });
-      
-      // ✅ НЕ пробрасываем ошибку дальше, чтобы избежать unhandled rejection
+
       return { error: errorMsg };
     } finally {
       setLoading(false);
@@ -164,16 +212,36 @@ export const AuthProvider = ({ children }) => {
       localStorage.setItem("user", JSON.stringify(newUser));
 
       setUser(newUser);
-      socketService.connect(token);
 
-      logger.info("User registered", { username: newUser.username });
+      try {
+        await socketService.connect(token);
 
-      return response.data;
+        // ✅ НОВОЕ: Принудительная синхронизация состояния
+        if (isMountedRef.current) {
+          setSocketConnected(socketService.isConnected());
+        }
+
+        logger.info("User registered and socket connected", {
+          username: newUser.username,
+          socketConnected: socketService.isConnected()
+        });
+      } catch (socketError) {
+        logger.error("Socket connection failed during registration", {
+          error: socketError.message
+        });
+
+        // ✅ НОВОЕ: Синхронизация состояния даже при ошибке
+        if (isMountedRef.current) {
+          setSocketConnected(socketService.isConnected());
+        }
+      }
+
+      return { success: true, data: response.data };
     } catch (err) {
       const errorMsg = err.response?.data?.message || "Registration failed";
       setError(errorMsg);
       logger.error("Registration failed", { error: errorMsg });
-      
+
       return { error: errorMsg };
     } finally {
       setLoading(false);
@@ -222,7 +290,7 @@ export const AuthProvider = ({ children }) => {
       user,
       loading,
       error,
-      socketConnected, // ✅ НОВОЕ: передаём состояние Socket
+      socketConnected,
       login,
       register,
       logout,

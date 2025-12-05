@@ -100,6 +100,7 @@ body {
 
 .status-dot.online {
   background: #28a745;
+  box-shadow: 0 0 8px rgba(40, 167, 69, 0.5);
 }
 
 .status-dot.offline {
@@ -132,6 +133,18 @@ body {
 .message {
   display: flex;
   margin-bottom: 1rem;
+  animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .message-own {
@@ -177,6 +190,34 @@ body {
   opacity: 0.7;
 }
 
+/* ✅ НОВОЕ: Стили для индикатора typing */
+.typing-indicator {
+  padding: 0.5rem 1rem;
+  background: #f8f9fa;
+  border-top: 1px solid #dee2e6;
+}
+
+.typing-text {
+  color: #6c757d;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+}
+
+.typing-text i {
+  animation: blink 1.4s infinite;
+}
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
 .chat-input {
   padding: 1rem;
   background: white;
@@ -217,6 +258,17 @@ body {
   margin-top: 2rem;
 }
 
+/* ✅ НОВОЕ: Стили для loader */
+.loader-container {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  background: #f8f9fa;
+}
+
+/* ✅ УЛУЧШЕНО: Адаптивность */
 @media (max-width: 768px) {
   .left-sidebar,
   .right-sidebar {
@@ -232,5 +284,13 @@ body {
 
   .message-content {
     max-width: 80%;
+  }
+
+  .chat-header {
+    padding: 0.75rem;
+  }
+
+  .chat-input {
+    padding: 0.75rem;
   }
 }

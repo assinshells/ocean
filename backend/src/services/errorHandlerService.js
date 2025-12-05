@@ -80,11 +80,11 @@ class ErrorHandlerService {
 
   logError(err, req) {
     const logLevel = err.statusCode >= 500 ? "error" : "warn";
-    const reqLogger = req.logger || logger;
+    const reqLogger = req?.logger || logger;
 
-    // ✅ ИСПРАВЛЕНО: используем правильный формат Pino
+    // ✅ ИСПРАВЛЕНО: Безопасное логирование с проверками
     const logData = {
-      msg: `${err.statusCode} - ${err.message}`,
+      msg: `${err.statusCode || 500} - ${err.message}`,
       err: {
         message: err.message,
         stack: err.stack,
@@ -92,32 +92,47 @@ class ErrorHandlerService {
         code: err.code,
         statusCode: err.statusCode,
       },
-      req: {
+    };
+
+    // ✅ ИСПРАВЛЕНО: Безопасное добавление информации о запросе
+    if (req) {
+      logData.req = {
         method: req.method,
-        url: req.url,
+        url: req.url || req.originalUrl,
         params: req.params,
         query: req.query,
         ip: req.ip,
-        userAgent: req.headers["user-agent"],
-      },
-    };
-
-    // Добавляем информацию о пользователе, если есть
-    if (req.user) {
-      logData.user = {
-        id: req.user._id?.toString(),
-        username: req.user.username,
+        userAgent: req.headers?.["user-agent"],
       };
+
+      // Добавляем информацию о пользователе, если есть
+      if (req.user) {
+        logData.user = {
+          id: req.user._id?.toString(),
+          username: req.user.username,
+        };
+      }
     }
 
-    reqLogger[logLevel](logData);
+    // ✅ Используем безопасное логирование
+    try {
+      reqLogger[logLevel](logData);
+    } catch (logErr) {
+      // Fallback если reqLogger сломан
+      console.error("Logger error:", logErr);
+      console.error("Original error:", err);
+    }
 
-    // ✅ НОВОЕ: В production дополнительно логируем критические ошибки в отдельный файл
+    // ✅ В production дополнительно логируем критические ошибки
     if (process.env.NODE_ENV === "production" && err.statusCode >= 500) {
-      logger.fatal({
-        msg: "Critical error occurred",
-        ...logData,
-      });
+      try {
+        logger.fatal({
+          msg: "Critical error occurred",
+          ...logData,
+        });
+      } catch (logErr) {
+        console.error("Fatal logger error:", logErr);
+      }
     }
   }
 
@@ -132,7 +147,7 @@ class ErrorHandlerService {
       response.stack = err.stack;
     }
 
-    // ✅ НОВОЕ: Добавляем timestamp для отладки
+    // Добавляем timestamp для отладки
     response.timestamp = new Date().toISOString();
 
     return response;
