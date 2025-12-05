@@ -1,4 +1,11 @@
-import { createContext, useState, useEffect, useCallback, useMemo } from 'react';
+import {
+    createContext,
+    useState,
+    useEffect,
+    useCallback,
+    useMemo,
+    useRef,
+} from 'react';
 import { authAPI } from '../services/api';
 import socketService from '../services/socket';
 import logger from '../utils/logger';
@@ -10,11 +17,23 @@ export const AuthProvider = ({ children }) => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
+    // Флаг для предотвращения multiple init calls
+    const isInitializing = useRef(false);
+    const isInitialized = useRef(false);
+
     const initAuth = useCallback(async () => {
+        // Предотвращаем множественные вызовы
+        if (isInitializing.current || isInitialized.current) {
+            return;
+        }
+
+        isInitializing.current = true;
+
         const token = localStorage.getItem('token');
 
         if (!token) {
             setLoading(false);
+            isInitializing.current = false;
             return;
         }
 
@@ -23,16 +42,23 @@ export const AuthProvider = ({ children }) => {
             const userData = response.data.data.user;
 
             setUser(userData);
+
+            // Подключаем сокет только после успешной верификации
             socketService.connect(token);
 
             logger.info('User authenticated', { username: userData.username });
+            isInitialized.current = true;
         } catch (err) {
             logger.error('Token verification failed', { error: err.message });
+
+            // Очищаем невалидные данные
             localStorage.removeItem('token');
             localStorage.removeItem('user');
+            setUser(null);
             setError('Session expired');
         } finally {
             setLoading(false);
+            isInitializing.current = false;
         }
     }, []);
 
@@ -85,7 +111,8 @@ export const AuthProvider = ({ children }) => {
 
             return response.data;
         } catch (err) {
-            const errorMsg = err.response?.data?.message || 'Registration failed';
+            const errorMsg =
+                err.response?.data?.message || 'Registration failed';
             setError(errorMsg);
             logger.error('Registration failed', { error: errorMsg });
             throw err;
@@ -95,20 +122,33 @@ export const AuthProvider = ({ children }) => {
     }, []);
 
     const logout = useCallback(() => {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        setUser(null);
-        setError(null);
-        socketService.disconnect();
+        try {
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            setUser(null);
+            setError(null);
+            socketService.disconnect();
 
-        logger.info('User logged out');
+            logger.info('User logged out');
+        } catch (err) {
+            logger.error('Logout error', { error: err.message });
+        }
     }, []);
 
     const updateUser = useCallback((updates) => {
         setUser((prev) => {
             if (!prev) return null;
+
             const updated = { ...prev, ...updates };
-            localStorage.setItem('user', JSON.stringify(updated));
+
+            try {
+                localStorage.setItem('user', JSON.stringify(updated));
+            } catch (err) {
+                logger.error('Failed to update user in localStorage', {
+                    error: err.message,
+                });
+            }
+
             return updated;
         });
     }, []);
@@ -116,6 +156,24 @@ export const AuthProvider = ({ children }) => {
     const clearError = useCallback(() => {
         setError(null);
     }, []);
+
+    // Восстановление из localStorage при первом рендере (fallback)
+    useEffect(() => {
+        if (!user && !loading) {
+            const storedUser = localStorage.getItem('user');
+            if (storedUser) {
+                try {
+                    const parsedUser = JSON.parse(storedUser);
+                    setUser(parsedUser);
+                } catch (err) {
+                    logger.error('Failed to parse stored user', {
+                        error: err.message,
+                    });
+                    localStorage.removeItem('user');
+                }
+            }
+        }
+    }, [user, loading]);
 
     const value = useMemo(
         () => ({
@@ -131,9 +189,5 @@ export const AuthProvider = ({ children }) => {
         [user, loading, error, login, register, logout, updateUser, clearError]
     );
 
-    return (
-        <AuthContext.Provider value={value}>
-            {children}
-        </AuthContext.Provider>
-    );
+    return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

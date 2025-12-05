@@ -7,6 +7,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
+    "dev:debug": "nodemon --inspect src/server.js",
     "test": "echo \"Error: no test specified\" && exit 1",
     "lint": "eslint src --ext .js",
     "format": "prettier --write \"src/**/*.js\""
@@ -16,7 +17,8 @@
     "socket.io",
     "express",
     "mongodb",
-    "websocket"
+    "websocket",
+    "pino"
   ],
   "author": "Erik Thompson",
   "license": "ISC",
@@ -35,6 +37,8 @@
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^9.0.0",
     "nodemailer": "^7.0.11",
+    "pino": "^10.1.0",
+    "pino-pretty": "^13.1.3",
     "socket.io": "^4.8.1"
   }
 }

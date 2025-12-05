@@ -1,6 +1,7 @@
 import Message from "../models/Message.js";
 import User from "../models/User.js";
 import { verifyToken } from "../utils/token.js";
+import { createSocketLogger } from "../config/logger.js";
 import logger from "../config/logger.js";
 import DOMPurify from "isomorphic-dompurify";
 
@@ -8,6 +9,7 @@ class SocketManager {
   constructor() {
     this.connectedUsers = new Map(); // userId -> socketId
     this.typingUsers = new Map(); // socketId -> { username, timeoutId }
+    this.messageRateLimiter = new Map(); // socketId -> { count, resetTime }
   }
 
   async authenticateSocket(socket, next) {
@@ -15,15 +17,24 @@ class SocketManager {
       const token = socket.handshake.auth.token;
 
       if (!token) {
-        logger.warn("Socket authentication failed: no token");
-        return next(new Error("Authentication error: Token required"));
+        logger.warn("Socket authentication failed: no token", {
+          socketId: socket.id,
+          ip: socket.handshake.address,
+        });
+        const error = new Error("Token required");
+        error.data = { code: "AUTH_TOKEN_REQUIRED" };
+        return next(error);
       }
 
       const decoded = verifyToken(token);
 
       if (!decoded || !decoded.userId) {
-        logger.warn("Socket authentication failed: invalid token");
-        return next(new Error("Authentication error: Invalid token"));
+        logger.warn("Socket authentication failed: invalid token", {
+          socketId: socket.id,
+        });
+        const error = new Error("Invalid token");
+        error.data = { code: "AUTH_INVALID_TOKEN" };
+        return next(error);
       }
 
       const user = await User.findById(decoded.userId)
@@ -33,101 +44,173 @@ class SocketManager {
       if (!user) {
         logger.warn("Socket authentication failed: user not found", {
           userId: decoded.userId,
+          socketId: socket.id,
         });
-        return next(new Error("Authentication error: User not found"));
+        const error = new Error("User not found");
+        error.data = { code: "AUTH_USER_NOT_FOUND" };
+        return next(error);
       }
 
       socket.user = user;
       next();
     } catch (error) {
-      logger.error("Socket authentication error", { error: error.message });
-      next(new Error("Authentication error"));
+      logger.error("Socket authentication error", {
+        error: error.message,
+        stack: error.stack,
+        socketId: socket.id,
+      });
+      const err = new Error("Authentication error");
+      err.data = { code: "AUTH_ERROR" };
+      next(err);
     }
   }
 
   async handleConnection(io, socket) {
     const user = socket.user;
     const userId = user._id.toString();
+    const socketLogger = createSocketLogger(socket);
 
-    logger.info("User connected", {
-      username: user.username,
-      socketId: socket.id,
-      userId,
-    });
+    socketLogger.info("User connected");
 
-    // Отключаем предыдущее соединение если есть
-    const existingSocketId = this.connectedUsers.get(userId);
-    if (existingSocketId && existingSocketId !== socket.id) {
-      const existingSocket = io.sockets.sockets.get(existingSocketId);
-      if (existingSocket) {
-        existingSocket.disconnect(true);
-      }
-    }
-
-    // Обновляем статус в БД и мапу
-    await User.findByIdAndUpdate(user._id, {
-      isOnline: true,
-      lastSeen: Date.now(),
-      socketId: socket.id,
-    });
-
-    this.connectedUsers.set(userId, socket.id);
-
-    // Отправляем список онлайн пользователей
-    await this.broadcastOnlineUsers(io);
-
-    // Отправляем историю сообщений (последние 50)
     try {
-      const recentMessages = await Message.getRecent(50);
-      socket.emit("messages:history", recentMessages);
+      // Отключаем предыдущее соединение если есть
+      const existingSocketId = this.connectedUsers.get(userId);
+      if (existingSocketId && existingSocketId !== socket.id) {
+        const existingSocket = io.sockets.sockets.get(existingSocketId);
+        if (existingSocket) {
+          socketLogger.info("Disconnecting previous session", {
+            oldSocketId: existingSocketId,
+          });
+          existingSocket.disconnect(true);
+        }
+      }
+
+      // Обновляем статус в БД и мапу
+      await User.findByIdAndUpdate(user._id, {
+        isOnline: true,
+        lastSeen: Date.now(),
+        socketId: socket.id,
+      });
+
+      this.connectedUsers.set(userId, socket.id);
+
+      // Отправляем список онлайн пользователей
+      await this.broadcastOnlineUsers(io);
+
+      // Отправляем историю сообщений
+      try {
+        const recentMessages = await Message.getRecent(50);
+        socket.emit("messages:history", recentMessages);
+        socketLogger.debug("Message history sent", {
+          count: recentMessages.length,
+        });
+      } catch (error) {
+        socketLogger.error("Failed to load message history", {
+          error: error.message,
+        });
+      }
+
+      // Обработчик отправки сообщения
+      socket.on("message:send", async (data) => {
+        await this.handleMessageSend(io, socket, data, socketLogger);
+      });
+
+      // Обработчик начала набора
+      socket.on("typing:start", () => {
+        this.handleTypingStart(socket, socketLogger);
+      });
+
+      // Обработчик окончания набора
+      socket.on("typing:stop", () => {
+        this.handleTypingStop(socket, socketLogger);
+      });
+
+      // Обработчик отключения
+      socket.on("disconnect", async (reason) => {
+        await this.handleDisconnect(io, socket, reason, socketLogger);
+      });
     } catch (error) {
-      logger.error("Failed to load message history", { error: error.message });
+      socketLogger.error("Connection handling error", {
+        error: error.message,
+        stack: error.stack,
+      });
+      socket.disconnect(true);
     }
-
-    // Обработчик отправки сообщения
-    socket.on("message:send", async (data) => {
-      await this.handleMessageSend(io, socket, data);
-    });
-
-    // Обработчик начала набора
-    socket.on("typing:start", () => {
-      this.handleTypingStart(socket);
-    });
-
-    // Обработчик окончания набора
-    socket.on("typing:stop", () => {
-      this.handleTypingStop(socket);
-    });
-
-    // Обработчик отключения
-    socket.on("disconnect", async () => {
-      await this.handleDisconnect(io, socket);
-    });
   }
 
-  async handleMessageSend(io, socket, data) {
+  // Rate limiting для сообщений
+  checkMessageRateLimit(socketId) {
+    const now = Date.now();
+    const limit = 10; // 10 сообщений
+    const window = 10000; // за 10 секунд
+
+    if (!this.messageRateLimiter.has(socketId)) {
+      this.messageRateLimiter.set(socketId, {
+        count: 1,
+        resetTime: now + window,
+      });
+      return true;
+    }
+
+    const record = this.messageRateLimiter.get(socketId);
+
+    if (now > record.resetTime) {
+      record.count = 1;
+      record.resetTime = now + window;
+      return true;
+    }
+
+    if (record.count >= limit) {
+      return false;
+    }
+
+    record.count++;
+    return true;
+  }
+
+  async handleMessageSend(io, socket, data, socketLogger) {
     try {
       const user = socket.user;
 
+      // Rate limiting
+      if (!this.checkMessageRateLimit(socket.id)) {
+        socketLogger.warn("Message rate limit exceeded");
+        socket.emit("error", {
+          message: "Too many messages. Please slow down.",
+          code: "RATE_LIMIT_EXCEEDED",
+        });
+        return;
+      }
+
       // Валидация
       if (!data || !data.text || typeof data.text !== "string") {
-        return socket.emit("error", {
+        socketLogger.warn("Invalid message format", { data });
+        socket.emit("error", {
           message: "Invalid message format",
+          code: "INVALID_FORMAT",
         });
+        return;
       }
 
       const text = data.text.trim();
 
       if (!text || text.length === 0) {
-        return socket.emit("error", {
+        socket.emit("error", {
           message: "Message cannot be empty",
+          code: "EMPTY_MESSAGE",
         });
+        return;
       }
 
       if (text.length > 2000) {
-        return socket.emit("error", {
-          message: "Message too long (max 2000 characters)",
+        socketLogger.warn("Message too long", {
+          length: text.length,
         });
+        socket.emit("error", {
+          message: "Message too long (max 2000 characters)",
+          code: "MESSAGE_TOO_LONG",
+        });
+        return;
       }
 
       // Sanitize для защиты от XSS
@@ -154,34 +237,35 @@ class SocketManager {
         timestamp: message.timestamp,
       });
 
-      logger.debug("Message sent", {
-        username: user.username,
-        messageId: message._id,
+      socketLogger.debug("Message sent", {
+        messageId: message._id.toString(),
+        textLength: sanitizedText.length,
       });
     } catch (error) {
-      logger.error("Message send error", {
+      socketLogger.error("Message send error", {
         error: error.message,
-        username: socket.user?.username,
+        stack: error.stack,
       });
 
       socket.emit("error", {
         message: "Failed to send message",
+        code: "MESSAGE_SEND_FAILED",
       });
     }
   }
 
-  handleTypingStart(socket) {
+  handleTypingStart(socket, socketLogger) {
     const user = socket.user;
 
     // Очищаем предыдущий таймаут если есть
     const existing = this.typingUsers.get(socket.id);
-    if (existing && existing.timeoutId) {
+    if (existing?.timeoutId) {
       clearTimeout(existing.timeoutId);
     }
 
     // Устанавливаем новый таймаут (автоматическая остановка через 3 сек)
     const timeoutId = setTimeout(() => {
-      this.handleTypingStop(socket);
+      this.handleTypingStop(socket, socketLogger);
     }, 3000);
 
     this.typingUsers.set(socket.id, {
@@ -192,9 +276,11 @@ class SocketManager {
     socket.broadcast.emit("user:typing", {
       username: user.username,
     });
+
+    socketLogger.debug("User started typing");
   }
 
-  handleTypingStop(socket) {
+  handleTypingStop(socket, socketLogger) {
     const user = socket.user;
     const existing = this.typingUsers.get(socket.id);
 
@@ -203,43 +289,58 @@ class SocketManager {
         clearTimeout(existing.timeoutId);
       }
       this.typingUsers.delete(socket.id);
-    }
 
-    socket.broadcast.emit("user:stopped-typing", {
-      username: user.username,
-    });
+      socket.broadcast.emit("user:stopped-typing", {
+        username: user.username,
+      });
+
+      socketLogger.debug("User stopped typing");
+    }
   }
 
-  async handleDisconnect(io, socket) {
+  async handleDisconnect(io, socket, reason, socketLogger) {
     const user = socket.user;
     const userId = user._id.toString();
 
-    logger.info("User disconnected", {
-      username: user.username,
-      socketId: socket.id,
-    });
+    socketLogger.info("User disconnected", { reason });
 
-    // Очищаем typing если был активен
-    this.handleTypingStop(socket);
+    // КРИТИЧЕСКИ ВАЖНО: Очищаем typing таймаут
+    const typingData = this.typingUsers.get(socket.id);
+    if (typingData?.timeoutId) {
+      clearTimeout(typingData.timeoutId);
+      this.typingUsers.delete(socket.id);
+    }
 
-    // Обновляем статус в БД
-    await User.findByIdAndUpdate(user._id, {
-      isOnline: false,
-      lastSeen: Date.now(),
-      socketId: null,
-    });
+    // Очищаем rate limiter
+    this.messageRateLimiter.delete(socket.id);
 
-    // Удаляем из мапы
-    this.connectedUsers.delete(userId);
+    try {
+      // Обновляем статус в БД
+      await User.findByIdAndUpdate(user._id, {
+        isOnline: false,
+        lastSeen: Date.now(),
+        socketId: null,
+      });
 
-    // Отправляем обновлённый список онлайн пользователей
-    await this.broadcastOnlineUsers(io);
+      // Удаляем из мапы
+      this.connectedUsers.delete(userId);
+
+      // Отправляем обновлённый список онлайн пользователей
+      await this.broadcastOnlineUsers(io);
+    } catch (error) {
+      socketLogger.error("Error updating user status on disconnect", {
+        error: error.message,
+      });
+    }
   }
 
   async broadcastOnlineUsers(io) {
     try {
       const onlineUsers = await User.getOnlineUsers();
       io.emit("users:online", onlineUsers);
+      logger.debug("Online users broadcasted", {
+        count: onlineUsers.length,
+      });
     } catch (error) {
       logger.error("Failed to broadcast online users", {
         error: error.message,
@@ -257,15 +358,20 @@ class SocketManager {
     logger.info("Socket.IO initialized");
   }
 
-  // Очистка при shutdown
+  // Полная очистка всех ресурсов
   cleanup() {
+    // Очищаем все typing таймауты
     this.typingUsers.forEach((value) => {
       if (value.timeoutId) {
         clearTimeout(value.timeoutId);
       }
     });
+
     this.typingUsers.clear();
     this.connectedUsers.clear();
+    this.messageRateLimiter.clear();
+
+    logger.info("Socket manager cleaned up");
   }
 }
 

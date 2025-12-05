@@ -1,22 +1,27 @@
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
-
-const JWT_SECRET =
-  process.env.JWT_SECRET || "your-secret-key-change-in-production";
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "7d";
+import env from "../config/env.js";
 
 export const generateToken = (userId) => {
-  return jwt.sign({ userId }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+  return jwt.sign({ userId: userId.toString() }, env.JWT_SECRET, {
+    expiresIn: env.JWT_EXPIRES_IN,
+  });
 };
 
 export const verifyToken = (token) => {
   try {
-    return jwt.verify(token, JWT_SECRET);
+    return jwt.verify(token, env.JWT_SECRET);
   } catch (error) {
     return null;
   }
 };
 
+// Генерация случайного токена для сброса пароля
 export const generateResetToken = () => {
   return crypto.randomBytes(32).toString("hex");
+};
+
+// Хеширование reset токена для безопасного хранения в БД
+export const hashResetToken = (token) => {
+  return crypto.createHash("sha256").update(token).digest("hex");
 };
