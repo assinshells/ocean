@@ -1,3 +1,4 @@
+// backend/src/models/Message.js
 import mongoose from "mongoose";
 import DOMPurify from "isomorphic-dompurify";
 
@@ -46,51 +47,63 @@ const messageSchema = new mongoose.Schema(
   }
 );
 
-// Составной индекс для пагинации
+// Составной индекс для эффективной пагинации
 messageSchema.index({ timestamp: -1, _id: -1 });
 
-// ✅ ИСПРАВЛЕНО: Убран next(), используем async/await
+// ✅ ИСПРАВЛЕНО: Правильный async/await без next()
 messageSchema.pre("save", async function () {
-  try {
-    if (this.isModified("text")) {
+  if (this.isModified("text")) {
+    try {
       this.text = DOMPurify.sanitize(this.text, {
         ALLOWED_TAGS: [],
         ALLOWED_ATTR: [],
       });
+    } catch (error) {
+      // В async hooks ошибки автоматически обрабатываются
+      throw new Error(`Sanitization failed: ${error.message}`);
     }
-  } catch (error) {
-    console.error("Error in message pre-save hook:", error.message);
-    throw error; // ✅ ИСПРАВЛЕНО: throw вместо next(error)
   }
 });
 
-// Статический метод для получения последних сообщений
-messageSchema.statics.getRecent = function (limit = 50) {
-  return this.find()
-    .sort({ timestamp: -1 })
-    .limit(limit)
-    .lean()
-    .then((messages) => messages.reverse())
-    .catch((error) => {
-      console.error("Error getting recent messages:", error.message);
-      throw error;
-    });
+// Статические методы для получения сообщений
+messageSchema.statics.getRecent = async function (limit = 50) {
+  try {
+    const messages = await this.find()
+      .sort({ timestamp: -1 })
+      .limit(limit)
+      .lean();
+
+    return messages.reverse(); // Возвращаем в хронологическом порядке
+  } catch (error) {
+    throw new Error(`Failed to get recent messages: ${error.message}`);
+  }
 };
 
-// Статический метод для пагинации
-messageSchema.statics.paginate = function (page = 1, limit = 50) {
-  const skip = (page - 1) * limit;
+// Метод пагинации с улучшенной производительностью
+messageSchema.statics.paginate = async function (page = 1, limit = 50) {
+  try {
+    const skip = (page - 1) * limit;
 
-  return this.find()
-    .sort({ timestamp: -1 })
-    .skip(skip)
-    .limit(limit)
-    .lean()
-    .then((messages) => messages.reverse())
-    .catch((error) => {
-      console.error("Error paginating messages:", error.message);
-      throw error;
-    });
+    // Используем агрегацию для лучшей производительности
+    const [messages, totalCount] = await Promise.all([
+      this.find().sort({ timestamp: -1 }).skip(skip).limit(limit).lean(),
+      this.countDocuments(),
+    ]);
+
+    return {
+      messages: messages.reverse(),
+      pagination: {
+        page,
+        limit,
+        total: totalCount,
+        pages: Math.ceil(totalCount / limit),
+        hasNext: page < Math.ceil(totalCount / limit),
+        hasPrev: page > 1,
+      },
+    };
+  } catch (error) {
+    throw new Error(`Pagination failed: ${error.message}`);
+  }
 };
 
 export default mongoose.model("Message", messageSchema);
