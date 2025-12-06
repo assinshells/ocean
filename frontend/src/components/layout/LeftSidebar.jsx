@@ -1,41 +1,73 @@
-const LeftSidebar = ({ users, currentUser }) => {
+// File: src/components/layout/LeftSidebar.jsx
+import React from 'react';
+
+// Props: collapsed (bool), onToggleCollapse (fn), handleLogout (fn), currentUser
+export default function LeftSidebar({ collapsed, onToggleCollapse, handleLogout, currentUser }) {
     return (
-        <div className="left-sidebar">
-            <div className="sidebar-header">
-                <h5 className="mb-0">
-                    <i className="bi bi-people-fill"></i> Пользователи онлайн
-                </h5>
-                <span className="badge bg-primary rounded-pill">{users.length}</span>
-            </div>
-
-            <div className="user-list">
-                {users.map((user) => (
-                    <div
-                        key={user._id}
-                        className={`user-item ${user._id === currentUser?._id ? 'current-user' : ''}`}
-                    >
-                        <div className="user-avatar">
-                            <i className="bi bi-person-circle"></i>
-                        </div>
-                        <div className="user-info">
-                            <div className="user-name">{user.username}</div>
-                            <div className="user-status">
-                                <span className="status-dot online"></span>
-                                В сети
-                            </div>
-                        </div>
+        <>
+            {/* Mobile: top header */}
+            <header className="md:hidden bg-gray-900 text-white flex items-center justify-between px-4 py-2">
+                <div className="flex items-center gap-2">
+                    <button aria-label="Open menu" onClick={() => onToggleCollapse(false)} className="text-2xl">
+                        ☰
+                    </button>
+                    <div className="flex items-center gap-2">
+                        <span className="text-2xl">🔥</span>
+                        <span className="font-medium">Лого</span>
                     </div>
-                ))}
+                </div>
 
-                {users.length === 0 && (
-                    <div className="text-center text-muted p-3">
-                        <i className="bi bi-info-circle"></i>
-                        <p className="mb-0 mt-2">Нет пользователей онлайн</p>
+                <div className="flex items-center gap-3">
+                    <div className="text-sm text-gray-200">{currentUser?.username}</div>
+                    <button className="btn btn-sm btn-outline-light" onClick={handleLogout}>Выход</button>
+                </div>
+            </header>
+
+            {/* Desktop: left sidebar */}
+            <nav
+                className={`hidden md:flex flex-col fixed left-0 top-0 h-screen bg-gray-900 text-white p-4 z-40 transition-all duration-300 
+          ${collapsed ? 'w-20' : 'w-64'}`}
+                aria-label="Main menu"
+            >
+                <div className="flex justify-between items-center mb-6">
+                    <div className="flex items-center gap-2 cursor-default">
+                        <span className="text-2xl">🔥</span>
+                        {!collapsed && <span className="ml-2 text-lg">Лого</span>}
                     </div>
-                )}
-            </div>
-        </div>
+
+                    <div className="flex items-center gap-2">
+                        <button onClick={() => onToggleCollapse(!collapsed)} className="border px-2 py-1 rounded text-sm bg-gray-800 hover:bg-gray-700">
+                            {collapsed ? '→' : '←'}
+                        </button>
+                    </div>
+                </div>
+
+                <ul className="flex flex-col flex-1">
+                    <li className="flex items-center mb-4 cursor-pointer hover:bg-gray-800 p-2 rounded">
+                        <span className="text-xl">🏠</span>
+                        {!collapsed && <span className="ml-2">Главная</span>}
+                    </li>
+                    <li className="flex items-center mb-4 cursor-pointer hover:bg-gray-800 p-2 rounded">
+                        <span className="text-xl">📄</span>
+                        {!collapsed && <span className="ml-2">Документы</span>}
+                    </li>
+                    <li className="flex items-center mb-4 cursor-pointer hover:bg-gray-800 p-2 rounded">
+                        <span className="text-xl">📊</span>
+                        {!collapsed && <span className="ml-2">Аналитика</span>}
+                    </li>
+                </ul>
+
+                <div className="mt-auto">
+                    <div className="flex items-center mb-4 cursor-pointer hover:bg-gray-800 p-2 rounded">
+                        <span className="text-xl">⚙️</span>
+                        {!collapsed && <span className="ml-2">Настройки</span>}
+                    </div>
+                    <div className="flex items-center cursor-pointer hover:bg-gray-800 p-2 rounded" onClick={handleLogout}>
+                        <span className="text-xl">🚪</span>
+                        {!collapsed && <span className="ml-2">Выход</span>}
+                    </div>
+                </div>
+            </nav>
+        </>
     );
-};
-
-export default LeftSidebar;
+}

@@ -7,7 +7,11 @@ import ChatArea from "../components/chat/ChatArea";
 import socketService from "../services/socket";
 import logger from "../utils/logger";
 
-const Chat = () => {
+export default function Chat({ handleLogout, socketService, useAuth, logger }) {
+  // lift collapsed state so main content can respect widths
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [rightOpenMobile, setRightOpenMobile] = useState(false);
+
   const { user, socketConnected } = useAuth();
   const [messages, setMessages] = useState([]);
   const [onlineUsers, setOnlineUsers] = useState([]);
@@ -15,6 +19,12 @@ const Chat = () => {
   const [typingUsers, setTypingUsers] = useState(new Set());
 
   const errorTimeoutRef = useRef(null);
+
+  useEffect(() => {
+    const handler = () => setRightOpenMobile((s) => !s);
+    window.addEventListener('toggleRightDrawer', handler);
+    return () => window.removeEventListener('toggleRightDrawer', handler);
+  }, []);
 
   // ✅ НОВОЕ: Логируем состояние при изменении
   useEffect(() => {
@@ -203,7 +213,7 @@ const Chat = () => {
   }, [user, socketConnected, showError]);
 
   return (
-    <div className="chat-container">
+    <div className="">
       {error && (
         <div
           className="position-fixed top-0 start-50 translate-middle-x mt-3"
@@ -224,20 +234,28 @@ const Chat = () => {
           </div>
         </div>
       )}
-
-      <LeftSidebar users={onlineUsers} currentUser={user} />
-
-      <ChatArea
-        messages={messages}
-        onSendMessage={sendMessage}
+      <LeftSidebar
+        collapsed={leftCollapsed}
+        onToggleCollapse={setLeftCollapsed}
+        handleLogout={handleLogout}
         currentUser={user}
-        isConnected={socketConnected}
-        typingUsers={typingUsersArray}
       />
+      <div className="flex-1 flex flex-col">
+        <ChatArea
+          messages={messages}
+          onSendMessage={sendMessage}
+          currentUser={user}
+          isConnected={socketConnected}
+          typingUsers={typingUsersArray}
+        />
+      </div>
 
-      <RightSidebar user={user} />
-    </div>
+      <RightSidebar
+        users={onlineUsers}
+        currentUser={user}
+        isOpen={rightOpenMobile}
+        onClose={() => setRightOpenMobile(false)}
+      />
+    </div >
   );
 };
-
-export default Chat;
