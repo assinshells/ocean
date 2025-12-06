@@ -49,8 +49,8 @@ const messageSchema = new mongoose.Schema(
 // Составной индекс для пагинации
 messageSchema.index({ timestamp: -1, _id: -1 });
 
-// ✅ ИСПРАВЛЕНО: Убрано логирование, которое вызывало ошибку
-messageSchema.pre("save", function (next) {
+// ✅ ИСПРАВЛЕНО: Убран next(), используем async/await
+messageSchema.pre("save", async function () {
   try {
     if (this.isModified("text")) {
       this.text = DOMPurify.sanitize(this.text, {
@@ -58,11 +58,9 @@ messageSchema.pre("save", function (next) {
         ALLOWED_ATTR: [],
       });
     }
-    next();
   } catch (error) {
-    // ✅ Простой console.error вместо logger
     console.error("Error in message pre-save hook:", error.message);
-    next(error);
+    throw error; // ✅ ИСПРАВЛЕНО: throw вместо next(error)
   }
 });
 

@@ -1,5 +1,5 @@
-// backend/src/services/errorHandlerService.js
 import logger from "../config/logger.js";
+import env from "../config/env.js"; // ✅ ИСПРАВЛЕНО: правильный путь
 import ApiError from "../utils/ApiError.js";
 import { HTTP_STATUS } from "../utils/constants.js";
 
@@ -82,49 +82,46 @@ class ErrorHandlerService {
     const logLevel = err.statusCode >= 500 ? "error" : "warn";
     const reqLogger = req?.logger || logger;
 
-    // ✅ ИСПРАВЛЕНО: Безопасное логирование с проверками
+    // ✅ НОВОЕ: Чистый формат логов
     const logData = {
       msg: `${err.statusCode || 500} - ${err.message}`,
-      err: {
-        message: err.message,
-        stack: err.stack,
-        name: err.name,
-        code: err.code,
-        statusCode: err.statusCode,
-      },
     };
 
-    // ✅ ИСПРАВЛЕНО: Безопасное добавление информации о запросе
+    // ✅ НОВОЕ: Добавляем минимальную информацию о запросе
     if (req) {
-      logData.req = {
-        method: req.method,
-        url: req.url || req.originalUrl,
-        params: req.params,
-        query: req.query,
-        ip: req.ip,
-        userAgent: req.headers?.["user-agent"],
-      };
+      logData.method = req.method;
+      logData.url = req.url || req.originalUrl;
 
-      // Добавляем информацию о пользователе, если есть
+      // Добавляем пользователя, если есть
       if (req.user) {
-        logData.user = {
-          id: req.user._id?.toString(),
-          username: req.user.username,
-        };
+        logData.username = req.user.username;
       }
     }
 
-    // ✅ Используем безопасное логирование
+    // ✅ НОВОЕ: Добавляем err только с нужными полями
+    if (err) {
+      logData.error = {
+        message: err.message,
+        code: err.code,
+        statusCode: err.statusCode,
+      };
+
+      // ✅ Stack только в production
+      if (env.NODE_ENV === "production") {
+        logData.error.stack = err.stack;
+      }
+    }
+
+    // ✅ Логируем
     try {
       reqLogger[logLevel](logData);
     } catch (logErr) {
-      // Fallback если reqLogger сломан
       console.error("Logger error:", logErr);
       console.error("Original error:", err);
     }
 
     // ✅ В production дополнительно логируем критические ошибки
-    if (process.env.NODE_ENV === "production" && err.statusCode >= 500) {
+    if (env.NODE_ENV === "production" && err.statusCode >= 500) {
       try {
         logger.fatal({
           msg: "Critical error occurred",

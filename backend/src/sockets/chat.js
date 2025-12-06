@@ -1,4 +1,3 @@
-// backend/src/sockets/chat.js
 import Message from "../models/Message.js";
 import User from "../models/User.js";
 import { verifyToken } from "../utils/token.js";
@@ -195,12 +194,12 @@ class SocketManager {
     try {
       const user = socket.user;
 
-      // ✅ ИСПРАВЛЕНО: Детальное логирование входящих данных
+      // ✅ УЛУЧШЕНО: Детальное логирование входящих данных
       socketLogger.info("Received message:send event", {
         hasData: !!data,
         dataType: typeof data,
         dataKeys: data ? Object.keys(data) : [],
-        text: data?.text,
+        rawData: JSON.stringify(data), // ✅ НОВОЕ: Логируем полные данные
       });
 
       // Rate limiting
@@ -213,7 +212,7 @@ class SocketManager {
         return;
       }
 
-      // ✅ ИСПРАВЛЕНО: Улучшенная валидация
+      // ✅ Валидация данных
       if (!data) {
         socketLogger.warn("Message send failed: no data provided");
         socket.emit(SOCKET_EVENTS.ERROR, {
@@ -263,14 +262,13 @@ class SocketManager {
       });
 
       socketLogger.info("Creating message", {
-        msg: "Creating message",
         originalLength: text.length,
         sanitizedLength: sanitizedText.length,
         userId: user._id.toString(),
         username: user.username,
       });
 
-      // ✅ ИСПРАВЛЕНО: Добавлена обработка ошибок при создании сообщения
+      // ✅ ИСПРАВЛЕНО: Детальная обработка ошибок БД
       let message;
       try {
         message = new Message({
@@ -280,24 +278,49 @@ class SocketManager {
           timestamp: new Date(),
         });
 
+        // ✅ НОВОЕ: Логируем данные перед сохранением
+        socketLogger.debug("Message object created", {
+          senderId: message.senderId,
+          username: message.username,
+          textLength: message.text.length,
+        });
+
         await message.save();
 
         socketLogger.info("Message saved to database", {
           messageId: message._id.toString(),
         });
       } catch (dbError) {
+        // ✅ ИСПРАВЛЕНО: Детальное логирование ошибки БД
         socketLogger.error("Database error while saving message", {
-          msg: "Database error while saving message",
-          error: dbError.message,
-          name: dbError.name,
-          code: dbError.code,
-          stack: dbError.stack,
-          userId: user._id.toString(),
+          errorMessage: dbError.message,
+          errorName: dbError.name,
+          errorCode: dbError.code,
+          errorStack: dbError.stack,
+          // ✅ НОВОЕ: Логируем детали валидации
+          validationErrors: dbError.errors
+            ? Object.keys(dbError.errors).map((key) => ({
+                field: key,
+                message: dbError.errors[key].message,
+                kind: dbError.errors[key].kind,
+              }))
+            : null,
+          // ✅ НОВОЕ: Логируем данные которые пытались сохранить
+          attemptedData: {
+            senderId: user._id.toString(),
+            username: user.username,
+            textLength: sanitizedText.length,
+            text: sanitizedText.substring(0, 100), // Первые 100 символов
+          },
         });
 
         socket.emit(SOCKET_EVENTS.ERROR, {
           message: "Failed to save message",
           code: ERROR_CODES.MESSAGE_SEND_FAILED,
+          // ✅ В development отправляем детали
+          ...(process.env.NODE_ENV === "development" && {
+            details: dbError.message,
+          }),
         });
         return;
       }
@@ -328,7 +351,9 @@ class SocketManager {
       socket.emit(SOCKET_EVENTS.ERROR, {
         message: "Failed to send message",
         code: ERROR_CODES.MESSAGE_SEND_FAILED,
-        details: error.message, // ✅ НОВОЕ: Отправляем детали ошибки в development
+        ...(process.env.NODE_ENV === "development" && {
+          details: error.message,
+        }),
       });
     }
   }

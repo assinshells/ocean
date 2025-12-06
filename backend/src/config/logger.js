@@ -1,4 +1,4 @@
-// backend/src/config/logger.js
+// backend/src/config/logger.js - ЧИСТЫЕ ЛОГИ
 import pino from "pino";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -21,8 +21,8 @@ const getTransport = () => {
       target: "pino-pretty",
       options: {
         colorize: true,
-        translateTime: "yyyy-mm-dd HH:MM:ss",
-        ignore: "pid,hostname",
+        translateTime: "HH:MM:ss",
+        ignore: "pid,hostname,env,requestId",
         singleLine: false,
         messageFormat: "{msg}",
         levelFirst: true,
@@ -30,7 +30,6 @@ const getTransport = () => {
     };
   }
 
-  // Production: пишем в файл
   return {
     target: "pino/file",
     options: {
@@ -45,25 +44,18 @@ const logger = pino({
   level: env.NODE_ENV === "production" ? "info" : "debug",
 
   serializers: {
-    // ✅ ИСПРАВЛЕНО: Безопасный сериализатор req
+    // ✅ ИСПРАВЛЕНО: Минимальный сериализатор req
     req: (req) => {
       if (!req) return {};
 
       return {
         method: req.method,
         url: req.url || req.originalUrl,
-        headers: req.headers
-          ? {
-              host: req.headers.host,
-              "user-agent": req.headers["user-agent"],
-            }
-          : {},
-        remoteAddress: req.ip,
-        remotePort: req.connection?.remotePort,
+        ip: req.ip,
       };
     },
 
-    // ✅ ИСПРАВЛЕНО: Безопасный сериализатор res
+    // ✅ ИСПРАВЛЕНО: Минимальный сериализатор res
     res: (res) => {
       if (!res) return {};
 
@@ -72,16 +64,37 @@ const logger = pino({
       };
     },
 
-    // ✅ Стандартный сериализатор ошибок
-    err: pino.stdSerializers.err,
+    // ✅ НОВОЕ: Кастомный сериализатор ошибок БЕЗ stack
+    err: (err) => {
+      if (!err) return {};
+
+      // В development показываем только message
+      if (env.NODE_ENV === "development") {
+        return {
+          message: err.message,
+          name: err.name,
+          code: err.code,
+          statusCode: err.statusCode,
+        };
+      }
+
+      // В production логируем всё (включая stack)
+      return {
+        message: err.message,
+        name: err.name,
+        code: err.code,
+        statusCode: err.statusCode,
+        stack: err.stack,
+      };
+    },
   },
 
   timestamp: pino.stdTimeFunctions.isoTime,
 
-  base: {
-    env: env.NODE_ENV,
-    pid: process.pid,
-  },
+  base:
+    env.NODE_ENV === "production"
+      ? { env: env.NODE_ENV, pid: process.pid }
+      : {}, // ✅ НОВОЕ: Убираем base в dev
 
   messageKey: "msg",
 
@@ -92,12 +105,22 @@ const logger = pino({
     level: (label) => {
       return { level: label.toUpperCase() };
     },
+    // ✅ НОВОЕ: Убираем лишние поля из логов
+    bindings: () => ({}),
   },
 });
 
 // --- CHILD-LOGGERS ---
 export const createRequestLogger = (req) => {
   const requestId = req.id || crypto.randomUUID();
+
+  // ✅ НОВОЕ: В development не добавляем requestId
+  if (env.NODE_ENV === "development") {
+    return logger.child({
+      userId: req.user?._id?.toString(),
+      username: req.user?.username,
+    });
+  }
 
   return logger.child({
     requestId,
@@ -113,6 +136,14 @@ export const createSocketLogger = (socket) => {
     return logger.child({ socketId: "unknown" });
   }
 
+  // ✅ НОВОЕ: В development минимальная информация
+  if (env.NODE_ENV === "development") {
+    return logger.child({
+      userId: socket.user?._id?.toString(),
+      username: socket.user?.username,
+    });
+  }
+
   return logger.child({
     socketId: socket.id,
     userId: socket.user?._id?.toString(),
@@ -121,10 +152,6 @@ export const createSocketLogger = (socket) => {
 };
 
 // Логируем старт приложения
-logger.info({
-  msg: "Logger initialized",
-  logDir: LOG_DIR,
-  level: logger.level,
-});
+logger.info("Logger initialized");
 
 export default logger;
