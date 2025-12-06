@@ -49,15 +49,21 @@ const messageSchema = new mongoose.Schema(
 // Составной индекс для пагинации
 messageSchema.index({ timestamp: -1, _id: -1 });
 
-// Sanitize текст перед сохранением (защита от XSS)
+// ✅ ИСПРАВЛЕНО: Убрано логирование, которое вызывало ошибку
 messageSchema.pre("save", function (next) {
-  if (this.isModified("text")) {
-    this.text = DOMPurify.sanitize(this.text, {
-      ALLOWED_TAGS: [],
-      ALLOWED_ATTR: [],
-    });
+  try {
+    if (this.isModified("text")) {
+      this.text = DOMPurify.sanitize(this.text, {
+        ALLOWED_TAGS: [],
+        ALLOWED_ATTR: [],
+      });
+    }
+    next();
+  } catch (error) {
+    // ✅ Простой console.error вместо logger
+    console.error("Error in message pre-save hook:", error.message);
+    next(error);
   }
-  next();
 });
 
 // Статический метод для получения последних сообщений
@@ -66,7 +72,11 @@ messageSchema.statics.getRecent = function (limit = 50) {
     .sort({ timestamp: -1 })
     .limit(limit)
     .lean()
-    .then((messages) => messages.reverse());
+    .then((messages) => messages.reverse())
+    .catch((error) => {
+      console.error("Error getting recent messages:", error.message);
+      throw error;
+    });
 };
 
 // Статический метод для пагинации
@@ -78,7 +88,11 @@ messageSchema.statics.paginate = function (page = 1, limit = 50) {
     .skip(skip)
     .limit(limit)
     .lean()
-    .then((messages) => messages.reverse());
+    .then((messages) => messages.reverse())
+    .catch((error) => {
+      console.error("Error paginating messages:", error.message);
+      throw error;
+    });
 };
 
 export default mongoose.model("Message", messageSchema);

@@ -16,11 +16,9 @@ class SocketManager {
     this.connectedUsers = new Map();
     this.typingUsers = new Map();
     this.messageRateLimiter = new Map();
-    // ВАЖНО: Добавляем Set для отслеживания всех таймеров
     this.activeTimeouts = new Set();
   }
 
-  // Безопасное создание таймера с автоочисткой
   createManagedTimeout(callback, delay) {
     const timeoutId = setTimeout(() => {
       this.activeTimeouts.delete(timeoutId);
@@ -30,7 +28,6 @@ class SocketManager {
     return timeoutId;
   }
 
-  // Безопасная очистка таймера
   clearManagedTimeout(timeoutId) {
     if (timeoutId) {
       clearTimeout(timeoutId);
@@ -54,7 +51,7 @@ class SocketManager {
 
       const decoded = verifyToken(token);
 
-      if (!decoded?.userId) {
+      if (!decoded || !decoded.userId) {
         logger.warn("Socket authentication failed: invalid token", {
           socketId: socket.id,
         });
@@ -99,7 +96,6 @@ class SocketManager {
     socketLogger.info("User connected");
 
     try {
-      // Отключаем предыдущее соединение
       const existingSocketId = this.connectedUsers.get(userId);
       if (existingSocketId && existingSocketId !== socket.id) {
         const existingSocket = io.sockets.sockets.get(existingSocketId);
@@ -107,13 +103,11 @@ class SocketManager {
           socketLogger.info("Disconnecting previous session", {
             oldSocketId: existingSocketId,
           });
-          // Очищаем ресурсы старого соединения перед disconnect
           this.cleanupSocketResources(existingSocketId);
           existingSocket.disconnect(true);
         }
       }
 
-      // Обновляем статус пользователя
       await User.findByIdAndUpdate(
         user._id,
         {
@@ -126,10 +120,8 @@ class SocketManager {
 
       this.connectedUsers.set(userId, socket.id);
 
-      // Отправляем обновлённый список пользователей
       await this.broadcastOnlineUsers(io);
 
-      // Отправляем историю сообщений с обработкой ошибок
       try {
         const recentMessages = await Message.getRecent(50);
         socket.emit(SOCKET_EVENTS.MESSAGES_HISTORY, recentMessages);
@@ -146,7 +138,6 @@ class SocketManager {
         });
       }
 
-      // Регистрируем обработчики событий
       socket.on(SOCKET_EVENTS.MESSAGE_SEND, async (data) => {
         await this.handleMessageSend(io, socket, data, socketLogger);
       });
@@ -204,6 +195,14 @@ class SocketManager {
     try {
       const user = socket.user;
 
+      // ✅ ИСПРАВЛЕНО: Детальное логирование входящих данных
+      socketLogger.info("Received message:send event", {
+        hasData: !!data,
+        dataType: typeof data,
+        dataKeys: data ? Object.keys(data) : [],
+        text: data?.text,
+      });
+
       // Rate limiting
       if (!this.checkMessageRateLimit(socket.id)) {
         socketLogger.warn("Message rate limit exceeded");
@@ -214,9 +213,22 @@ class SocketManager {
         return;
       }
 
-      // Валидация входных данных
-      if (!data?.text || typeof data.text !== "string") {
-        socketLogger.warn("Invalid message format", { data });
+      // ✅ ИСПРАВЛЕНО: Улучшенная валидация
+      if (!data) {
+        socketLogger.warn("Message send failed: no data provided");
+        socket.emit(SOCKET_EVENTS.ERROR, {
+          message: "No data provided",
+          code: ERROR_CODES.INVALID_FORMAT,
+        });
+        return;
+      }
+
+      if (!data.text || typeof data.text !== "string") {
+        socketLogger.warn("Invalid message format", {
+          hasText: !!data.text,
+          textType: typeof data.text,
+          data,
+        });
         socket.emit(SOCKET_EVENTS.ERROR, {
           message: "Invalid message format",
           code: ERROR_CODES.INVALID_FORMAT,
@@ -227,6 +239,7 @@ class SocketManager {
       const text = data.text.trim();
 
       if (!text || text.length === 0) {
+        socketLogger.warn("Empty message");
         socket.emit(SOCKET_EVENTS.ERROR, {
           message: "Message cannot be empty",
           code: ERROR_CODES.EMPTY_MESSAGE,
@@ -249,15 +262,45 @@ class SocketManager {
         ALLOWED_ATTR: [],
       });
 
-      // Создание и сохранение сообщения
-      const message = new Message({
-        senderId: user._id,
+      socketLogger.info("Creating message", {
+        msg: "Creating message",
+        originalLength: text.length,
+        sanitizedLength: sanitizedText.length,
+        userId: user._id.toString(),
         username: user.username,
-        text: sanitizedText,
-        timestamp: new Date(),
       });
 
-      await message.save();
+      // ✅ ИСПРАВЛЕНО: Добавлена обработка ошибок при создании сообщения
+      let message;
+      try {
+        message = new Message({
+          senderId: user._id,
+          username: user.username,
+          text: sanitizedText,
+          timestamp: new Date(),
+        });
+
+        await message.save();
+
+        socketLogger.info("Message saved to database", {
+          messageId: message._id.toString(),
+        });
+      } catch (dbError) {
+        socketLogger.error("Database error while saving message", {
+          msg: "Database error while saving message",
+          error: dbError.message,
+          name: dbError.name,
+          code: dbError.code,
+          stack: dbError.stack,
+          userId: user._id.toString(),
+        });
+
+        socket.emit(SOCKET_EVENTS.ERROR, {
+          message: "Failed to save message",
+          code: ERROR_CODES.MESSAGE_SEND_FAILED,
+        });
+        return;
+      }
 
       // Broadcast нового сообщения
       const messageData = {
@@ -270,19 +313,22 @@ class SocketManager {
 
       io.emit(SOCKET_EVENTS.MESSAGE_NEW, messageData);
 
-      socketLogger.debug("Message sent", {
+      socketLogger.info("Message broadcasted", {
         messageId: message._id.toString(),
-        textLength: sanitizedText.length,
+        recipientsCount: io.sockets.sockets.size,
       });
     } catch (error) {
       socketLogger.error("Message send error", {
         error: error.message,
         stack: error.stack,
+        name: error.name,
+        userId: socket.user?._id?.toString(),
       });
 
       socket.emit(SOCKET_EVENTS.ERROR, {
         message: "Failed to send message",
         code: ERROR_CODES.MESSAGE_SEND_FAILED,
+        details: error.message, // ✅ НОВОЕ: Отправляем детали ошибки в development
       });
     }
   }
@@ -290,13 +336,11 @@ class SocketManager {
   handleTypingStart(io, socket, socketLogger) {
     const user = socket.user;
 
-    // Очищаем предыдущий таймаут
     const existing = this.typingUsers.get(socket.id);
     if (existing?.timeoutId) {
       this.clearManagedTimeout(existing.timeoutId);
     }
 
-    // Создаём управляемый таймаут
     const timeoutId = this.createManagedTimeout(() => {
       this.handleTypingStop(io, socket, socketLogger);
     }, 3000);
@@ -329,16 +373,13 @@ class SocketManager {
     }
   }
 
-  // НОВЫЙ МЕТОД: Централизованная очистка ресурсов сокета
   cleanupSocketResources(socketId) {
-    // Очищаем typing таймаут
     const typingData = this.typingUsers.get(socketId);
     if (typingData?.timeoutId) {
       this.clearManagedTimeout(typingData.timeoutId);
       this.typingUsers.delete(socketId);
     }
 
-    // Очищаем rate limiter
     this.messageRateLimiter.delete(socketId);
   }
 
@@ -348,11 +389,9 @@ class SocketManager {
 
     socketLogger.info("User disconnected", { reason });
 
-    // Очистка ресурсов сокета
     this.cleanupSocketResources(socket.id);
 
     try {
-      // Обновляем статус пользователя
       await User.findByIdAndUpdate(
         user._id,
         {
@@ -363,10 +402,8 @@ class SocketManager {
         { new: true }
       );
 
-      // Удаляем из мапы подключенных пользователей
       this.connectedUsers.delete(userId);
 
-      // Broadcast обновлённого списка
       await this.broadcastOnlineUsers(io);
     } catch (error) {
       socketLogger.error("Error updating user status on disconnect", {
@@ -390,26 +427,21 @@ class SocketManager {
   }
 
   initialize(io) {
-    // Middleware для аутентификации
     io.use((socket, next) => this.authenticateSocket(socket, next));
 
-    // Обработчик подключения
     io.on(SOCKET_EVENTS.CONNECT, (socket) => this.handleConnection(io, socket));
 
     logger.info("Socket.IO initialized");
   }
 
-  // УЛУЧШЕННЫЙ cleanup с очисткой всех таймеров
   cleanup() {
     logger.info("Cleaning up socket manager resources");
 
-    // Очищаем все активные таймеры
     this.activeTimeouts.forEach((timeoutId) => {
       clearTimeout(timeoutId);
     });
     this.activeTimeouts.clear();
 
-    // Очищаем typing таймауты (double check)
     this.typingUsers.forEach((value) => {
       if (value.timeoutId) {
         clearTimeout(value.timeoutId);
@@ -426,7 +458,6 @@ class SocketManager {
 
 const socketManager = new SocketManager();
 
-// Очистка при завершении процесса
 process.on("SIGTERM", () => socketManager.cleanup());
 process.on("SIGINT", () => socketManager.cleanup());
 

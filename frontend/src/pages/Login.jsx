@@ -1,4 +1,3 @@
-// frontend/src/pages/Login.jsx
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
@@ -18,18 +17,24 @@ const Login = () => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+
+        // ✅ Валидация перед отправкой
+        if (!formData.username.trim() || !formData.password.trim()) {
+            setError('Заполните все поля');
+            return;
+        }
+
         setError('');
         setLoading(true);
 
         try {
-            // ✅ login теперь возвращает объект с error, а не пробрасывает исключение
+            // ✅ login теперь возвращает объект с error
             const result = await login(formData);
-            
+
             if (result.error) {
                 // ✅ Ошибка обрабатывается без refresh
                 setError(result.error);
-                setLoading(false);
-                return;
+                return; // ✅ Не забываем return после setError
             }
 
             // ✅ Успешный вход - переходим в чат
@@ -38,6 +43,8 @@ const Login = () => {
             // ✅ Fallback на случай неожиданных ошибок
             console.error('Login error:', err);
             setError('Произошла непредвиденная ошибка');
+        } finally {
+            // ✅ ВАЖНО: setLoading(false) в finally, чтобы сбросить состояние в любом случае
             setLoading(false);
         }
     };
@@ -80,6 +87,7 @@ const Login = () => {
                                         disabled={loading}
                                         required
                                         autoComplete="username"
+                                        autoFocus
                                     />
                                 </div>
 

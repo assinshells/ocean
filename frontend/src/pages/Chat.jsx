@@ -8,13 +8,23 @@ import socketService from "../services/socket";
 import logger from "../utils/logger";
 
 const Chat = () => {
-  const { user, socketConnected } = useAuth(); // ✅ Получаем состояние из AuthContext
+  const { user, socketConnected } = useAuth();
   const [messages, setMessages] = useState([]);
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [error, setError] = useState(null);
   const [typingUsers, setTypingUsers] = useState(new Set());
 
   const errorTimeoutRef = useRef(null);
+
+  // ✅ НОВОЕ: Логируем состояние при изменении
+  useEffect(() => {
+    logger.info("Chat state updated", {
+      user: user?.username,
+      socketConnected,
+      messagesCount: messages.length,
+      onlineUsersCount: onlineUsers.length
+    });
+  }, [user, socketConnected, messages.length, onlineUsers.length]);
 
   const showError = useCallback((errorMessage, duration = 5000) => {
     setError(errorMessage);
@@ -56,6 +66,11 @@ const Chat = () => {
             return prev;
           }
           return [...prev, message];
+        });
+
+        logger.debug("New message added", {
+          messageId: message._id,
+          from: message.username
         });
       },
 
@@ -112,9 +127,11 @@ const Chat = () => {
 
   const sendMessage = useCallback(
     async (text) => {
+      // ✅ УЛУЧШЕННАЯ ВАЛИДАЦИЯ
       if (!text?.trim()) {
         logger.warn("Attempted to send empty message");
-        return;
+        showError("Сообщение не может быть пустым", 3000);
+        throw new Error("Empty message");
       }
 
       const trimmedText = text.trim();
@@ -125,26 +142,65 @@ const Chat = () => {
         throw new Error("Message too long");
       }
 
-      // ✅ Используем socketConnected из AuthContext
+      // ✅ ДЕТАЛЬНАЯ ПРОВЕРКА ПОДКЛЮЧЕНИЯ
       if (!socketConnected) {
-        logger.warn("Cannot send message: not connected");
-        showError("Нет подключения к серверу", 3000);
+        logger.error("Cannot send message: socket not connected", {
+          socketConnected,
+          socketExists: !!socketService.getSocket(),
+          socketId: socketService.getSocket()?.id
+        });
+        showError("Нет подключения к серверу. Проверьте соединение.", 3000);
         throw new Error("Not connected");
       }
 
+      if (!user) {
+        logger.error("Cannot send message: user not authenticated");
+        showError("Необходимо авторизоваться", 3000);
+        throw new Error("Not authenticated");
+      }
+
       try {
-        socketService.emit("message:send", { text: trimmedText });
-        logger.debug("Message sent", { length: trimmedText.length });
+        logger.info("Sending message", {
+          textLength: trimmedText.length,
+          socketId: socketService.getSocket()?.id,
+          username: user.username,
+          data: { text: trimmedText }
+        });
+
+        const emitted = socketService.emit("message:send", { text: trimmedText });
+
+        if (emitted) {
+          logger.debug("Message sent successfully");
+        } else {
+          logger.error("Failed to emit message - socket not ready");
+          throw new Error("Socket not ready");
+        }
       } catch (err) {
-        logger.error("Failed to send message", { error: err.message });
+        logger.error("Failed to send message", {
+          error: err.message,
+          stack: err.stack
+        });
         showError("Не удалось отправить сообщение", 3000);
         throw err;
       }
     },
-    [socketConnected, showError] // ✅ Зависимость от socketConnected
+    [socketConnected, user, showError]
   );
 
   const typingUsersArray = useMemo(() => Array.from(typingUsers), [typingUsers]);
+
+  // ✅ НОВОЕ: Показываем предупреждение если нет подключения
+  useEffect(() => {
+    if (user && !socketConnected) {
+      const timeoutId = setTimeout(() => {
+        if (!socketConnected) {
+          showError("Нет подключения к серверу. Попробуйте обновить страницу.", 10000);
+        }
+      }, 3000); // Ждём 3 секунды после авторизации
+
+      return () => clearTimeout(timeoutId);
+    }
+  }, [user, socketConnected, showError]);
 
   return (
     <div className="chat-container">
@@ -170,15 +226,15 @@ const Chat = () => {
       )}
 
       <LeftSidebar users={onlineUsers} currentUser={user} />
-      
+
       <ChatArea
         messages={messages}
         onSendMessage={sendMessage}
         currentUser={user}
-        isConnected={socketConnected} // ✅ Передаём правильное состояние
+        isConnected={socketConnected}
         typingUsers={typingUsersArray}
       />
-      
+
       <RightSidebar user={user} />
     </div>
   );

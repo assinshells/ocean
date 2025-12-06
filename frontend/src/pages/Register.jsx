@@ -21,15 +21,31 @@ const Register = () => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+
+        // ✅ Валидация перед отправкой
+        if (!formData.username.trim() || !formData.password.trim()) {
+            setError('Заполните обязательные поля');
+            return;
+        }
+
+        if (formData.username.length < 3) {
+            setError('Имя пользователя должно быть минимум 3 символа');
+            return;
+        }
+
+        if (formData.password.length < 6) {
+            setError('Пароль должен быть минимум 6 символов');
+            return;
+        }
+
         setError('');
         setLoading(true);
 
         try {
             const result = await register(formData);
-            
+
             if (result.error) {
                 setError(result.error);
-                setLoading(false);
                 return;
             }
 
@@ -37,6 +53,7 @@ const Register = () => {
         } catch (err) {
             console.error('Registration error:', err);
             setError('Произошла непредвиденная ошибка');
+        } finally {
             setLoading(false);
         }
     };
@@ -67,7 +84,7 @@ const Register = () => {
                             <form onSubmit={handleSubmit}>
                                 <div className="mb-3">
                                     <label htmlFor="username" className="form-label">
-                                        Имя пользователя
+                                        Имя пользователя <span className="text-danger">*</span>
                                     </label>
                                     <input
                                         type="text"
@@ -83,6 +100,7 @@ const Register = () => {
                                         pattern="[a-zA-Z0-9_]+"
                                         title="Только буквы, цифры и подчёркивание"
                                         autoComplete="username"
+                                        autoFocus
                                     />
                                     <div className="form-text">
                                         От 3 до 30 символов (буквы, цифры, подчёркивание)
@@ -103,11 +121,14 @@ const Register = () => {
                                         disabled={loading}
                                         autoComplete="email"
                                     />
+                                    <div className="form-text">
+                                        Используется для восстановления пароля
+                                    </div>
                                 </div>
 
                                 <div className="mb-3">
                                     <label htmlFor="password" className="form-label">
-                                        Пароль
+                                        Пароль <span className="text-danger">*</span>
                                     </label>
                                     <input
                                         type="password"

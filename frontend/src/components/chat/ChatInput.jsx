@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import socketService from '../../services/socket';
 import { debounce } from '../../utils/helpers';
+import logger from '../../utils/logger';
 
 const ChatInput = ({ onSendMessage, isConnected = false }) => {
     const [message, setMessage] = useState('');
@@ -8,11 +9,16 @@ const ChatInput = ({ onSendMessage, isConnected = false }) => {
     const inputRef = useRef(null);
     const isTypingRef = useRef(false);
 
-    // Создаём debounced функции один раз с useMemo
+    // ✅ НОВОЕ: Логируем состояние подключения
+    useEffect(() => {
+        logger.debug("ChatInput connection state", { isConnected });
+    }, [isConnected]);
+
     const emitTypingStart = useMemo(
         () =>
             debounce(() => {
                 if (isConnected && !isTypingRef.current) {
+                    logger.debug("Emitting typing:start");
                     socketService.emit('typing:start');
                     isTypingRef.current = true;
                 }
@@ -24,6 +30,7 @@ const ChatInput = ({ onSendMessage, isConnected = false }) => {
         () =>
             debounce(() => {
                 if (isConnected && isTypingRef.current) {
+                    logger.debug("Emitting typing:stop");
                     socketService.emit('typing:stop');
                     isTypingRef.current = false;
                 }
@@ -32,7 +39,6 @@ const ChatInput = ({ onSendMessage, isConnected = false }) => {
     );
 
     useEffect(() => {
-        // Cleanup debounced functions и сброс typing при размонтировании
         return () => {
             emitTypingStart.cancel();
             emitTypingStop.cancel();
@@ -69,14 +75,38 @@ const ChatInput = ({ onSendMessage, isConnected = false }) => {
 
             const trimmedMessage = message.trim();
 
-            if (!trimmedMessage || isSending || !isConnected) {
+            // ✅ УЛУЧШЕННАЯ ВАЛИДАЦИЯ
+            if (!trimmedMessage) {
+                logger.warn("Submit blocked: empty message");
+                return;
+            }
+
+            if (isSending) {
+                logger.warn("Submit blocked: already sending");
+                return;
+            }
+
+            if (!isConnected) {
+                logger.error("Submit blocked: not connected", {
+                    isConnected,
+                    socketExists: !!socketService.getSocket(),
+                    socketId: socketService.getSocket()?.id
+                });
                 return;
             }
 
             setIsSending(true);
 
             try {
+                logger.info("Submitting message", {
+                    length: trimmedMessage.length,
+                    isConnected,
+                    socketId: socketService.getSocket()?.id
+                });
+
                 await onSendMessage(trimmedMessage);
+
+                // ✅ Очищаем поле только после успешной отправки
                 setMessage('');
                 inputRef.current?.focus();
 
@@ -86,8 +116,14 @@ const ChatInput = ({ onSendMessage, isConnected = false }) => {
                     socketService.emit('typing:stop');
                     isTypingRef.current = false;
                 }
+
+                logger.debug("Message submitted successfully");
             } catch (error) {
-                console.error('Failed to send message:', error);
+                logger.error('Failed to send message', {
+                    error: error.message,
+                    stack: error.stack
+                });
+                // ✅ НЕ очищаем поле при ошибке, чтобы пользователь мог повторить
             } finally {
                 setIsSending(false);
             }
@@ -120,7 +156,7 @@ const ChatInput = ({ onSendMessage, isConnected = false }) => {
                         placeholder={
                             isConnected
                                 ? 'Введите сообщение...'
-                                : 'Подключение...'
+                                : 'Подключение к серверу...'
                         }
                         value={message}
                         onChange={handleChange}
@@ -143,6 +179,13 @@ const ChatInput = ({ onSendMessage, isConnected = false }) => {
                     className="btn btn-primary"
                     disabled={isDisabled}
                     aria-label="Send message"
+                    title={
+                        !isConnected
+                            ? "Нет подключения"
+                            : isSending
+                                ? "Отправка..."
+                                : "Отправить"
+                    }
                 >
                     {isSending ? (
                         <span
@@ -158,7 +201,7 @@ const ChatInput = ({ onSendMessage, isConnected = false }) => {
             {!isConnected && (
                 <div className="text-danger small mt-1">
                     <i className="bi bi-exclamation-circle"></i> Нет подключения
-                    к серверу
+                    к серверу. Проверьте соединение.
                 </div>
             )}
         </div>

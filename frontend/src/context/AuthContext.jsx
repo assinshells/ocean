@@ -21,7 +21,6 @@ export const AuthProvider = ({ children }) => {
   const initPromiseRef = useRef(null);
   const isMountedRef = useRef(true);
 
-  // ✅ ИСПРАВЛЕНО: Слушатель состояния Socket с принудительной проверкой
   useEffect(() => {
     const handleConnect = () => {
       logger.info("Socket connected in AuthContext");
@@ -50,7 +49,6 @@ export const AuthProvider = ({ children }) => {
     socketService.on("disconnect", handleDisconnect);
     socketService.on("connect_error", handleConnectError);
 
-    // ✅ НОВОЕ: Периодическая проверка состояния Socket (на случай race condition)
     const checkInterval = setInterval(() => {
       if (isMountedRef.current) {
         const isConnected = socketService.isConnected();
@@ -64,9 +62,8 @@ export const AuthProvider = ({ children }) => {
           return isConnected;
         });
       }
-    }, 1000); // Проверяем каждую секунду
+    }, 1000);
 
-    // Проверяем текущее состояние сразу
     if (isMountedRef.current) {
       setSocketConnected(socketService.isConnected());
     }
@@ -103,7 +100,6 @@ export const AuthProvider = ({ children }) => {
         try {
           await socketService.connect(token);
 
-          // ✅ НОВОЕ: Принудительная синхронизация состояния после подключения
           if (isMountedRef.current) {
             setSocketConnected(socketService.isConnected());
           }
@@ -117,7 +113,6 @@ export const AuthProvider = ({ children }) => {
             error: socketError.message
           });
 
-          // ✅ НОВОЕ: Синхронизация состояния даже при ошибке
           if (isMountedRef.current) {
             setSocketConnected(socketService.isConnected());
           }
@@ -168,7 +163,6 @@ export const AuthProvider = ({ children }) => {
       try {
         await socketService.connect(token);
 
-        // ✅ НОВОЕ: Принудительная синхронизация состояния
         if (isMountedRef.current) {
           setSocketConnected(socketService.isConnected());
         }
@@ -182,19 +176,28 @@ export const AuthProvider = ({ children }) => {
           error: socketError.message
         });
 
-        // ✅ НОВОЕ: Синхронизация состояния даже при ошибке
         if (isMountedRef.current) {
           setSocketConnected(socketService.isConnected());
         }
       }
 
+      // ✅ ИСПРАВЛЕНО: Возвращаем success всегда
       return { success: true, data: response.data };
     } catch (err) {
-      const errorMsg = err.response?.data?.message || "Login failed";
-      setError(errorMsg);
-      logger.error("Login failed", { error: errorMsg });
+      // ✅ ИСПРАВЛЕНО: Извлекаем правильное сообщение об ошибке
+      const errorMsg = err.response?.data?.message ||
+        err.message ||
+        "Login failed";
 
-      return { error: errorMsg };
+      setError(errorMsg);
+      logger.error("Login failed", {
+        error: errorMsg,
+        status: err.response?.status,
+        data: err.response?.data
+      });
+
+      // ✅ ИСПРАВЛЕНО: Возвращаем объект с ошибкой вместо пробрасывания
+      return { success: false, error: errorMsg };
     } finally {
       setLoading(false);
     }
@@ -216,7 +219,6 @@ export const AuthProvider = ({ children }) => {
       try {
         await socketService.connect(token);
 
-        // ✅ НОВОЕ: Принудительная синхронизация состояния
         if (isMountedRef.current) {
           setSocketConnected(socketService.isConnected());
         }
@@ -230,7 +232,6 @@ export const AuthProvider = ({ children }) => {
           error: socketError.message
         });
 
-        // ✅ НОВОЕ: Синхронизация состояния даже при ошибке
         if (isMountedRef.current) {
           setSocketConnected(socketService.isConnected());
         }
@@ -238,11 +239,17 @@ export const AuthProvider = ({ children }) => {
 
       return { success: true, data: response.data };
     } catch (err) {
-      const errorMsg = err.response?.data?.message || "Registration failed";
-      setError(errorMsg);
-      logger.error("Registration failed", { error: errorMsg });
+      const errorMsg = err.response?.data?.message ||
+        err.message ||
+        "Registration failed";
 
-      return { error: errorMsg };
+      setError(errorMsg);
+      logger.error("Registration failed", {
+        error: errorMsg,
+        status: err.response?.status
+      });
+
+      return { success: false, error: errorMsg };
     } finally {
       setLoading(false);
     }

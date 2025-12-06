@@ -20,13 +20,34 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
+// ✅ ИСПРАВЛЕНО: Убрана принудительная перезагрузка при 401
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    // ✅ Обрабатываем 401 только для токен-зависимых запросов
     if (error.response?.status === 401) {
-      localStorage.removeItem("token");
-      localStorage.removeItem("user");
-      window.location.href = "/login";
+      const requestUrl = error.config?.url || "";
+
+      // ✅ НЕ редиректим на /login и /register эндпоинтах
+      if (
+        !requestUrl.includes("/auth/login") &&
+        !requestUrl.includes("/auth/register") &&
+        !requestUrl.includes("/auth/forgot-password")
+      ) {
+        // ✅ Очищаем токен только если это НЕ запрос на верификацию
+        if (!requestUrl.includes("/auth/verify")) {
+          localStorage.removeItem("token");
+          localStorage.removeItem("user");
+        }
+
+        // ✅ Редиректим только если мы НЕ на странице логина
+        if (
+          window.location.pathname !== "/login" &&
+          window.location.pathname !== "/register"
+        ) {
+          window.location.href = "/login";
+        }
+      }
     }
     return Promise.reject(error);
   }
