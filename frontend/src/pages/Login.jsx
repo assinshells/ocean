@@ -11,16 +11,20 @@ const Login = () => {
 
     const handleChange = (e) => {
         setFormData({ ...formData, [e.target.name]: e.target.value });
-        // ✅ Очищаем ошибку при изменении полей
         if (error) setError('');
+    };
+
+    // ✅ НОВОЕ: Функция очистки формы
+    const clearForm = () => {
+        setFormData({ username: '', password: '' });
     };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
 
-        // ✅ Валидация перед отправкой
         if (!formData.username.trim() || !formData.password.trim()) {
             setError('Заполните все поля');
+            clearForm(); // ✅ Очищаем при пустых полях
             return;
         }
 
@@ -28,23 +32,22 @@ const Login = () => {
         setLoading(true);
 
         try {
-            // ✅ login теперь возвращает объект с error
             const result = await login(formData);
 
             if (result.error) {
-                // ✅ Ошибка обрабатывается без refresh
                 setError(result.error);
-                return; // ✅ Не забываем return после setError
+
+                // ✅ НОВОЕ: Очищаем форму при ошибке аутентификации
+                clearForm();
+                return;
             }
 
-            // ✅ Успешный вход - переходим в чат
             navigate('/chat', { replace: true });
         } catch (err) {
-            // ✅ Fallback на случай неожиданных ошибок
             console.error('Login error:', err);
             setError('Произошла непредвиденная ошибка');
+            clearForm(); // ✅ Очищаем и при неожиданных ошибках
         } finally {
-            // ✅ ВАЖНО: setLoading(false) в finally, чтобы сбросить состояние в любом случае
             setLoading(false);
         }
     };

@@ -144,6 +144,7 @@ const ChatInput = ({ onSendMessage, isConnected = false }) => {
     const isDisabled = !isConnected || isSending || !message.trim();
     const charCount = message.length;
     const isNearLimit = charCount > 1800;
+    const isOverLimit = charCount > 2000;
 
     return (
         <div className="chat-input">
@@ -165,15 +166,43 @@ const ChatInput = ({ onSendMessage, isConnected = false }) => {
                         maxLength={2000}
                         autoComplete="off"
                     />
+                    {/* ✅ НОВОЕ: Показываем счётчик и кнопку очистки */}
                     {charCount > 0 && (
-                        <small
-                            className={`position-absolute end-0 bottom-0 me-2 mb-1 ${isNearLimit ? 'text-warning' : 'text-muted'
-                                }`}
+                        <div
+                            className="position-absolute end-0 bottom-0 me-2 mb-1 d-flex align-items-center gap-2"
+                            style={{ pointerEvents: 'all' }}
                         >
-                            {charCount}/2000
-                        </small>
+                            <small
+                                className={
+                                    isOverLimit ? 'text-danger fw-bold' :
+                                        isNearLimit ? 'text-warning' :
+                                            'text-muted'
+                                }
+                            >
+                                {charCount}/2000
+                            </small>
+
+                            {/* ✅ Кнопка очистки */}
+                            <button
+                                type="button"
+                                className="btn btn-sm btn-link text-muted p-0"
+                                onClick={() => clearInput(true)}
+                                title="Очистить (ESC)"
+                                style={{
+                                    fontSize: '0.8rem',
+                                    textDecoration: 'none',
+                                    opacity: 0.6,
+                                    transition: 'opacity 0.2s'
+                                }}
+                                onMouseEnter={(e) => e.target.style.opacity = 1}
+                                onMouseLeave={(e) => e.target.style.opacity = 0.6}
+                            >
+                                <i className="bi bi-x-circle"></i>
+                            </button>
+                        </div>
                     )}
                 </div>
+
                 <button
                     type="submit"
                     className="btn btn-primary"
@@ -184,7 +213,9 @@ const ChatInput = ({ onSendMessage, isConnected = false }) => {
                             ? "Нет подключения"
                             : isSending
                                 ? "Отправка..."
-                                : "Отправить"
+                                : isOverLimit
+                                    ? "Сообщение слишком длинное"
+                                    : "Отправить"
                     }
                 >
                     {isSending ? (
@@ -202,6 +233,13 @@ const ChatInput = ({ onSendMessage, isConnected = false }) => {
                 <div className="text-danger small mt-1">
                     <i className="bi bi-exclamation-circle"></i> Нет подключения
                     к серверу. Проверьте соединение.
+                </div>
+            )}
+            {/* ✅ НОВОЕ: Предупреждение о превышении лимита */}
+            {isOverLimit && (
+                <div className="text-danger small mt-1">
+                    <i className="bi bi-exclamation-triangle-fill"></i> Сообщение
+                    превышает максимальную длину (2000 символов)
                 </div>
             )}
         </div>

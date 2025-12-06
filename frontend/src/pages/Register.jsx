@@ -1,4 +1,3 @@
-// frontend/src/pages/Register.jsx
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
@@ -19,22 +18,31 @@ const Register = () => {
         if (error) setError('');
     };
 
+    // ✅ НОВОЕ: Функция очистки формы
+    const clearForm = () => {
+        setFormData({ username: '', password: '', email: '' });
+    };
+
     const handleSubmit = async (e) => {
         e.preventDefault();
 
-        // ✅ Валидация перед отправкой
+        // Валидация
         if (!formData.username.trim() || !formData.password.trim()) {
             setError('Заполните обязательные поля');
+            clearForm(); // ✅ Очищаем при пустых полях
             return;
         }
 
         if (formData.username.length < 3) {
             setError('Имя пользователя должно быть минимум 3 символа');
+            clearForm(); // ✅ Очищаем при невалидном username
             return;
         }
 
         if (formData.password.length < 6) {
             setError('Пароль должен быть минимум 6 символов');
+            // ✅ При ошибке пароля очищаем только пароль
+            setFormData(prev => ({ ...prev, password: '' }));
             return;
         }
 
@@ -46,6 +54,16 @@ const Register = () => {
 
             if (result.error) {
                 setError(result.error);
+
+                // ✅ НОВОЕ: Умная очистка в зависимости от ошибки
+                if (result.error.includes('уже существует') ||
+                    result.error.includes('уже используется')) {
+                    // Если username/email занят - очищаем всю форму
+                    clearForm();
+                } else {
+                    // При других ошибках очищаем только пароль
+                    setFormData(prev => ({ ...prev, password: '' }));
+                }
                 return;
             }
 
@@ -53,6 +71,7 @@ const Register = () => {
         } catch (err) {
             console.error('Registration error:', err);
             setError('Произошла непредвиденная ошибка');
+            clearForm(); // ✅ Очищаем при неожиданных ошибках
         } finally {
             setLoading(false);
         }
