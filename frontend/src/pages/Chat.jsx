@@ -13,12 +13,11 @@ const Chat = () => {
   const { user, logout, socketConnected } = useAuth();
 
   // State
-  const [leftCollapsed, setLeftCollapsed] = useState(false);
-  const [rightOpenMobile, setRightOpenMobile] = useState(false);
   const [messages, setMessages] = useState([]);
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [error, setError] = useState(null);
   const [typingUsers, setTypingUsers] = useState(new Set());
+  const [rightSidebarOpen, setRightSidebarOpen] = useState(false); // для мобильных
 
   const errorTimeoutRef = useRef(null);
 
@@ -200,13 +199,9 @@ const Chat = () => {
     [socketConnected, user, showError]
   );
 
-  // Toggle right sidebar on mobile
-  const toggleRightSidebar = useCallback((state) => {
-    if (typeof state === 'boolean') {
-      setRightOpenMobile(state);
-    } else {
-      setRightOpenMobile(prev => !prev);
-    }
+  // Toggle right sidebar (mobile)
+  const toggleRightSidebar = useCallback(() => {
+    setRightSidebarOpen(prev => !prev);
   }, []);
 
   // Convert Set to Array for typing users
@@ -248,13 +243,10 @@ const Chat = () => {
           </div>
         </div>
       )}
+
       {/* Left Sidebar */}
-      <LeftSidebar
-        collapsed={leftCollapsed}
-        onToggleCollapse={setLeftCollapsed}
-        handleLogout={handleLogout}
-        currentUser={user}
-      />
+      <LeftSidebar handleLogout={handleLogout} />
+
       {/* Main Content */}
       <ChatArea
         messages={messages}
@@ -263,13 +255,38 @@ const Chat = () => {
         isConnected={socketConnected}
         typingUsers={typingUsersArray}
       />
+
       {/* Right Sidebar */}
-      <RightSidebar
-        users={onlineUsers}
-        currentUser={user}
-        isOpen={rightOpenMobile}
-        onClose={() => toggleRightSidebar(false)}
-      />
+      <div className={`right-sidebar-wrapper ${rightSidebarOpen ? 'show' : ''}`}>
+        <RightSidebar
+          users={onlineUsers}
+          currentUser={user}
+          isOpen={rightSidebarOpen}
+          onClose={() => setRightSidebarOpen(false)}
+        />
+      </div>
+
+      {/* Mobile: Toggle Right Sidebar Button */}
+      <button
+        className="btn btn-primary btn-floating d-lg-none"
+        onClick={toggleRightSidebar}
+        title="Пользователи онлайн"
+      >
+        <i className="bi bi-people-fill"></i>
+        {onlineUsers.length > 0 && (
+          <span className="badge bg-danger position-absolute top-0 start-100 translate-middle">
+            {onlineUsers.length}
+          </span>
+        )}
+      </button>
+
+      {/* Mobile: Backdrop for Right Sidebar */}
+      {rightSidebarOpen && (
+        <div
+          className="sidebar-backdrop d-lg-none"
+          onClick={() => setRightSidebarOpen(false)}
+        ></div>
+      )}
     </div>
   );
 };
