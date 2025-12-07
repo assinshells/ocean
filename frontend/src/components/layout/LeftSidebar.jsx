@@ -1,73 +1,82 @@
-// File: src/components/layout/LeftSidebar.jsx
-import React from 'react';
+// frontend/src/components/layout/LeftSidebar.jsx
+import React, { useState, useEffect } from "react";
+import Logo from "../chat/Logo";
+import SettingsModal from "../chat/SettingsModal";
 
-// Props: collapsed (bool), onToggleCollapse (fn), handleLogout (fn), currentUser
-export default function LeftSidebar({ collapsed, onToggleCollapse, handleLogout, currentUser }) {
+export default function SideMenu({ handleLogout }) {
+    const [showSettings, setShowSettings] = useState(false);
+    const [theme, setTheme] = useState("light");
+
+    // ===== Theme Logic =====
+    const toggleTheme = () => {
+        const newTheme = theme === "light" ? "dark" : "light";
+        setTheme(newTheme);
+
+        document.body.classList.remove("light", "dark");
+        document.body.classList.add(newTheme);
+
+        localStorage.setItem("theme", newTheme);
+    };
+
+    useEffect(() => {
+        const saved = localStorage.getItem("theme") || "light";
+        setTheme(saved);
+        document.body.classList.add(saved);
+    }, []);
+
     return (
         <>
-            {/* Mobile: top header */}
-            <header className="md:hidden bg-gray-900 text-white flex items-center justify-between px-4 py-2">
-                <div className="flex items-center gap-2">
-                    <button aria-label="Open menu" onClick={() => onToggleCollapse(false)} className="text-2xl">
-                        ☰
-                    </button>
-                    <div className="flex items-center gap-2">
-                        <span className="text-2xl">🔥</span>
-                        <span className="font-medium">Лого</span>
-                    </div>
+            <div className="side-menu flex-lg-column me-lg-1 ms-lg-0">
+                <Logo />
+                <div className="flex-lg-column my-auto">
+                    <ul className="nav side-menu-nav justify-content-center">
+                        <li className="nav-item">
+                            <a className="nav-link" href="#">
+                                <i className="bi bi-person"></i>
+                            </a>
+                        </li>
+
+                        <li className="nav-item">
+                            <a className="nav-link" href="#" onClick={() => setShowSettings(true)}>
+                                <i className="bi bi-gear"></i>
+                            </a>
+                        </li>
+                        <li className="nav-item dropdown profile-user-dropdown d-inline-block d-lg-none">
+                            <a className="nav-link dropdown-toggle no-caret" href="#" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                                <i className="bi bi-three-dots"></i>
+                            </a>
+                            <div className="dropdown-menu">
+                                <a className="dropdown-item" href="#">Profile <i className="bi bi-person float-end text-muted"></i></a>
+                                <a className="dropdown-item" href="#" onClick={() => setShowSettings(true)}>Setting <i className="bi bi-gear float-end text-muted"></i></a>
+                                <div className="dropdown-divider"></div>
+                                <a className="dropdown-item" href="#" onClick={handleLogout}>Log out <i className="bi bi-box-arrow-right float-end text-muted"></i></a>
+                            </div>
+                        </li>
+                    </ul>
                 </div>
 
-                <div className="flex items-center gap-3">
-                    <div className="text-sm text-gray-200">{currentUser?.username}</div>
-                    <button className="btn btn-sm btn-outline-light" onClick={handleLogout}>Выход</button>
+                <div className="flex-lg-column d-none d-lg-block">
+                    <ul className="nav side-menu-nav justify-content-center">
+                        <li className="nav-item btn-group dropup profile-user-dropdown">
+                            <a className="nav-link dropdown-toggle no-caret" href="#" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                                <i className="bi bi-three-dots"></i>
+                            </a>
+                            <div className="dropdown-menu ">
+                                <a className="dropdown-item" href="#">Profile <i className="bi bi-person float-end text-muted"></i></a>
+                                <a className="dropdown-item" href="#" onClick={() => setShowSettings(true)}>Setting <i className="bi bi-gear float-end text-muted"></i></a>
+                                <div className="dropdown-divider"></div>
+                                <a className="dropdown-item" href="#" onClick={handleLogout}>Log out <i className="bi bi-box-arrow-right float-end text-muted"></i></a>
+                            </div>
+                        </li>
+                    </ul>
                 </div>
-            </header>
-
-            {/* Desktop: left sidebar */}
-            <nav
-                className={`hidden md:flex flex-col fixed left-0 top-0 h-screen bg-gray-900 text-white p-4 z-40 transition-all duration-300 
-          ${collapsed ? 'w-20' : 'w-64'}`}
-                aria-label="Main menu"
-            >
-                <div className="flex justify-between items-center mb-6">
-                    <div className="flex items-center gap-2 cursor-default">
-                        <span className="text-2xl">🔥</span>
-                        {!collapsed && <span className="ml-2 text-lg">Лого</span>}
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                        <button onClick={() => onToggleCollapse(!collapsed)} className="border px-2 py-1 rounded text-sm bg-gray-800 hover:bg-gray-700">
-                            {collapsed ? '→' : '←'}
-                        </button>
-                    </div>
-                </div>
-
-                <ul className="flex flex-col flex-1">
-                    <li className="flex items-center mb-4 cursor-pointer hover:bg-gray-800 p-2 rounded">
-                        <span className="text-xl">🏠</span>
-                        {!collapsed && <span className="ml-2">Главная</span>}
-                    </li>
-                    <li className="flex items-center mb-4 cursor-pointer hover:bg-gray-800 p-2 rounded">
-                        <span className="text-xl">📄</span>
-                        {!collapsed && <span className="ml-2">Документы</span>}
-                    </li>
-                    <li className="flex items-center mb-4 cursor-pointer hover:bg-gray-800 p-2 rounded">
-                        <span className="text-xl">📊</span>
-                        {!collapsed && <span className="ml-2">Аналитика</span>}
-                    </li>
-                </ul>
-
-                <div className="mt-auto">
-                    <div className="flex items-center mb-4 cursor-pointer hover:bg-gray-800 p-2 rounded">
-                        <span className="text-xl">⚙️</span>
-                        {!collapsed && <span className="ml-2">Настройки</span>}
-                    </div>
-                    <div className="flex items-center cursor-pointer hover:bg-gray-800 p-2 rounded" onClick={handleLogout}>
-                        <span className="text-xl">🚪</span>
-                        {!collapsed && <span className="ml-2">Выход</span>}
-                    </div>
-                </div>
-            </nav>
+            </div>
+            <SettingsModal
+                show={showSettings}
+                onClose={() => setShowSettings(false)}
+                theme={theme}
+                toggleTheme={toggleTheme}
+            />
         </>
     );
 }

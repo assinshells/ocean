@@ -1,3 +1,4 @@
+// frontend/src/components/chat/ChatInput.jsx
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import socketService from '../../services/socket';
 import { debounce } from '../../utils/helpers';
@@ -9,7 +10,6 @@ const ChatInput = ({ onSendMessage, isConnected = false }) => {
     const inputRef = useRef(null);
     const isTypingRef = useRef(false);
 
-    // ✅ НОВОЕ: Логируем состояние подключения
     useEffect(() => {
         logger.debug("ChatInput connection state", { isConnected });
     }, [isConnected]);
@@ -50,6 +50,34 @@ const ChatInput = ({ onSendMessage, isConnected = false }) => {
         };
     }, [emitTypingStart, emitTypingStop, isConnected]);
 
+    // Функция очистки поля ввода
+    const clearInput = useCallback((shouldFocus = false) => {
+        setMessage('');
+
+        // Останавливаем typing индикатор
+        emitTypingStop.cancel();
+        if (isTypingRef.current && isConnected) {
+            socketService.emit('typing:stop');
+            isTypingRef.current = false;
+        }
+
+        if (shouldFocus && inputRef.current) {
+            inputRef.current.focus();
+        }
+    }, [emitTypingStop, isConnected]);
+
+    // Обработчик ESC для очистки
+    useEffect(() => {
+        const handleEscape = (e) => {
+            if (e.key === 'Escape' && message.trim()) {
+                clearInput(true);
+            }
+        };
+
+        window.addEventListener('keydown', handleEscape);
+        return () => window.removeEventListener('keydown', handleEscape);
+    }, [message, clearInput]);
+
     const handleChange = useCallback(
         (e) => {
             const value = e.target.value;
@@ -75,7 +103,6 @@ const ChatInput = ({ onSendMessage, isConnected = false }) => {
 
             const trimmedMessage = message.trim();
 
-            // ✅ УЛУЧШЕННАЯ ВАЛИДАЦИЯ
             if (!trimmedMessage) {
                 logger.warn("Submit blocked: empty message");
                 return;
@@ -106,16 +133,8 @@ const ChatInput = ({ onSendMessage, isConnected = false }) => {
 
                 await onSendMessage(trimmedMessage);
 
-                // ✅ Очищаем поле только после успешной отправки
-                setMessage('');
-                inputRef.current?.focus();
-
-                // Останавливаем typing индикатор
-                emitTypingStop.cancel();
-                if (isTypingRef.current && isConnected) {
-                    socketService.emit('typing:stop');
-                    isTypingRef.current = false;
-                }
+                // Очищаем поле только после успешной отправки
+                clearInput(true);
 
                 logger.debug("Message submitted successfully");
             } catch (error) {
@@ -123,12 +142,11 @@ const ChatInput = ({ onSendMessage, isConnected = false }) => {
                     error: error.message,
                     stack: error.stack
                 });
-                // ✅ НЕ очищаем поле при ошибке, чтобы пользователь мог повторить
             } finally {
                 setIsSending(false);
             }
         },
-        [message, isSending, isConnected, onSendMessage, emitTypingStop]
+        [message, isSending, isConnected, onSendMessage, clearInput]
     );
 
     const handleKeyPress = useCallback(
@@ -148,7 +166,7 @@ const ChatInput = ({ onSendMessage, isConnected = false }) => {
 
     return (
         <div className="chat-input">
-            <form onSubmit={handleSubmit} className="d-flex gap-2">
+            <form onSubmit={handleSubmit}>
                 <div className="flex-grow-1 position-relative">
                     <input
                         ref={inputRef}
@@ -166,11 +184,11 @@ const ChatInput = ({ onSendMessage, isConnected = false }) => {
                         maxLength={2000}
                         autoComplete="off"
                     />
-                    {/* ✅ НОВОЕ: Показываем счётчик и кнопку очистки */}
+
                     {charCount > 0 && (
                         <div
-                            className="position-absolute end-0 bottom-0 me-2 mb-1 d-flex align-items-center gap-2"
-                            style={{ pointerEvents: 'all' }}
+                            className="position-absolute end-0 bottom-0 me-2 mb-2 d-flex align-items-center gap-2"
+                            style={{ pointerEvents: 'auto' }}
                         >
                             <small
                                 className={
@@ -182,20 +200,21 @@ const ChatInput = ({ onSendMessage, isConnected = false }) => {
                                 {charCount}/2000
                             </small>
 
-                            {/* ✅ Кнопка очистки */}
                             <button
                                 type="button"
                                 className="btn btn-sm btn-link text-muted p-0"
                                 onClick={() => clearInput(true)}
                                 title="Очистить (ESC)"
+                                tabIndex={-1}
                                 style={{
-                                    fontSize: '0.8rem',
+                                    fontSize: '0.9rem',
                                     textDecoration: 'none',
                                     opacity: 0.6,
-                                    transition: 'opacity 0.2s'
+                                    transition: 'opacity 0.2s',
+                                    lineHeight: 1
                                 }}
-                                onMouseEnter={(e) => e.target.style.opacity = 1}
-                                onMouseLeave={(e) => e.target.style.opacity = 0.6}
+                                onMouseEnter={(e) => e.currentTarget.style.opacity = 1}
+                                onMouseLeave={(e) => e.currentTarget.style.opacity = 0.6}
                             >
                                 <i className="bi bi-x-circle"></i>
                             </button>
@@ -207,7 +226,7 @@ const ChatInput = ({ onSendMessage, isConnected = false }) => {
                     type="submit"
                     className="btn btn-primary"
                     disabled={isDisabled}
-                    aria-label="Send message"
+                    aria-label="Отправить сообщение"
                     title={
                         !isConnected
                             ? "Нет подключения"
@@ -229,17 +248,18 @@ const ChatInput = ({ onSendMessage, isConnected = false }) => {
                     )}
                 </button>
             </form>
+
             {!isConnected && (
-                <div className="text-danger small mt-1">
-                    <i className="bi bi-exclamation-circle"></i> Нет подключения
-                    к серверу. Проверьте соединение.
+                <div className="text-danger small mt-2">
+                    <i className="bi bi-exclamation-circle me-1"></i>
+                    Нет подключения к серверу. Проверьте соединение.
                 </div>
             )}
-            {/* ✅ НОВОЕ: Предупреждение о превышении лимита */}
+
             {isOverLimit && (
-                <div className="text-danger small mt-1">
-                    <i className="bi bi-exclamation-triangle-fill"></i> Сообщение
-                    превышает максимальную длину (2000 символов)
+                <div className="text-danger small mt-2">
+                    <i className="bi bi-exclamation-triangle-fill me-1"></i>
+                    Сообщение превышает максимальную длину (2000 символов)
                 </div>
             )}
         </div>

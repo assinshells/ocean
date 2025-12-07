@@ -123,16 +123,20 @@ const MessageList = memo(({ messages, currentUser }) => {
     }
 
     return (
-        <div className="message-list" ref={messagesContainerRef}>
-            {messages.map((message) => (
-                <Message
-                    key={message._id}
-                    message={message}
-                    isOwn={message.senderId === currentUser?._id}
-                />
-            ))}
-            <div ref={messagesEndRef} />
-        </div>
+        <>
+            <ul className="list-unstyled mb-0" ref={messagesContainerRef}>
+                <li>
+                    {messages.map((message) => (
+                        <Message
+                            key={message._id}
+                            message={message}
+                            isOwn={message.senderId === currentUser?._id}
+                        />
+                    ))}
+                </li>
+                <div ref={messagesEndRef} />
+            </ul>
+        </>
     );
 });
 

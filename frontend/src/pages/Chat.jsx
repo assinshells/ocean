@@ -1,18 +1,20 @@
 // frontend/src/pages/Chat.jsx
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useAuth } from "../hooks/useAuth";
+import { useNavigate } from "react-router-dom";
 import LeftSidebar from "../components/layout/LeftSidebar";
 import RightSidebar from "../components/layout/RightSidebar";
 import ChatArea from "../components/chat/ChatArea";
 import socketService from "../services/socket";
 import logger from "../utils/logger";
 
-export default function Chat({ handleLogout, socketService, useAuth, logger }) {
-  // lift collapsed state so main content can respect widths
+const Chat = () => {
+  const navigate = useNavigate();
+  const { user, logout, socketConnected } = useAuth();
+
+  // State
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightOpenMobile, setRightOpenMobile] = useState(false);
-
-  const { user, socketConnected } = useAuth();
   const [messages, setMessages] = useState([]);
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [error, setError] = useState(null);
@@ -20,13 +22,13 @@ export default function Chat({ handleLogout, socketService, useAuth, logger }) {
 
   const errorTimeoutRef = useRef(null);
 
-  useEffect(() => {
-    const handler = () => setRightOpenMobile((s) => !s);
-    window.addEventListener('toggleRightDrawer', handler);
-    return () => window.removeEventListener('toggleRightDrawer', handler);
-  }, []);
+  // Logout handler
+  const handleLogout = useCallback(() => {
+    logout();
+    navigate('/login', { replace: true });
+  }, [logout, navigate]);
 
-  // ✅ НОВОЕ: Логируем состояние при изменении
+  // Logging state changes
   useEffect(() => {
     logger.info("Chat state updated", {
       user: user?.username,
@@ -36,6 +38,7 @@ export default function Chat({ handleLogout, socketService, useAuth, logger }) {
     });
   }, [user, socketConnected, messages.length, onlineUsers.length]);
 
+  // Error handler
   const showError = useCallback((errorMessage, duration = 5000) => {
     setError(errorMessage);
 
@@ -48,6 +51,7 @@ export default function Chat({ handleLogout, socketService, useAuth, logger }) {
     }, duration);
   }, []);
 
+  // Socket event handlers
   const socketHandlers = useMemo(
     () => ({
       connect: () => {
@@ -119,6 +123,7 @@ export default function Chat({ handleLogout, socketService, useAuth, logger }) {
     [showError]
   );
 
+  // Setup socket listeners
   useEffect(() => {
     Object.entries(socketHandlers).forEach(([event, handler]) => {
       socketService.on(event, handler);
@@ -135,9 +140,9 @@ export default function Chat({ handleLogout, socketService, useAuth, logger }) {
     };
   }, [socketHandlers]);
 
+  // Send message handler
   const sendMessage = useCallback(
     async (text) => {
-      // ✅ УЛУЧШЕННАЯ ВАЛИДАЦИЯ
       if (!text?.trim()) {
         logger.warn("Attempted to send empty message");
         showError("Сообщение не может быть пустым", 3000);
@@ -152,7 +157,6 @@ export default function Chat({ handleLogout, socketService, useAuth, logger }) {
         throw new Error("Message too long");
       }
 
-      // ✅ ДЕТАЛЬНАЯ ПРОВЕРКА ПОДКЛЮЧЕНИЯ
       if (!socketConnected) {
         logger.error("Cannot send message: socket not connected", {
           socketConnected,
@@ -173,8 +177,7 @@ export default function Chat({ handleLogout, socketService, useAuth, logger }) {
         logger.info("Sending message", {
           textLength: trimmedText.length,
           socketId: socketService.getSocket()?.id,
-          username: user.username,
-          data: { text: trimmedText }
+          username: user.username
         });
 
         const emitted = socketService.emit("message:send", { text: trimmedText });
@@ -197,30 +200,41 @@ export default function Chat({ handleLogout, socketService, useAuth, logger }) {
     [socketConnected, user, showError]
   );
 
+  // Toggle right sidebar on mobile
+  const toggleRightSidebar = useCallback((state) => {
+    if (typeof state === 'boolean') {
+      setRightOpenMobile(state);
+    } else {
+      setRightOpenMobile(prev => !prev);
+    }
+  }, []);
+
+  // Convert Set to Array for typing users
   const typingUsersArray = useMemo(() => Array.from(typingUsers), [typingUsers]);
 
-  // ✅ НОВОЕ: Показываем предупреждение если нет подключения
+  // Show connection warning
   useEffect(() => {
     if (user && !socketConnected) {
       const timeoutId = setTimeout(() => {
         if (!socketConnected) {
           showError("Нет подключения к серверу. Попробуйте обновить страницу.", 10000);
         }
-      }, 3000); // Ждём 3 секунды после авторизации
+      }, 3000);
 
       return () => clearTimeout(timeoutId);
     }
   }, [user, socketConnected, showError]);
 
   return (
-    <div className="">
+    <div className="layout-wrapper d-lg-flex">
+      {/* Error notification */}
       {error && (
         <div
           className="position-fixed top-0 start-50 translate-middle-x mt-3"
-          style={{ zIndex: 9999 }}
+          style={{ zIndex: 9999, maxWidth: '90%', width: '500px' }}
         >
           <div
-            className="alert alert-danger alert-dismissible fade show"
+            className="alert alert-danger alert-dismissible fade show shadow-sm"
             role="alert"
           >
             <i className="bi bi-exclamation-triangle-fill me-2"></i>
@@ -234,28 +248,30 @@ export default function Chat({ handleLogout, socketService, useAuth, logger }) {
           </div>
         </div>
       )}
+      {/* Left Sidebar */}
       <LeftSidebar
         collapsed={leftCollapsed}
         onToggleCollapse={setLeftCollapsed}
         handleLogout={handleLogout}
         currentUser={user}
       />
-      <div className="flex-1 flex flex-col">
-        <ChatArea
-          messages={messages}
-          onSendMessage={sendMessage}
-          currentUser={user}
-          isConnected={socketConnected}
-          typingUsers={typingUsersArray}
-        />
-      </div>
-
+      {/* Main Content */}
+      <ChatArea
+        messages={messages}
+        onSendMessage={sendMessage}
+        currentUser={user}
+        isConnected={socketConnected}
+        typingUsers={typingUsersArray}
+      />
+      {/* Right Sidebar */}
       <RightSidebar
         users={onlineUsers}
         currentUser={user}
         isOpen={rightOpenMobile}
-        onClose={() => setRightOpenMobile(false)}
+        onClose={() => toggleRightSidebar(false)}
       />
-    </div >
+    </div>
   );
 };
+
+export default Chat;

@@ -1,10 +1,13 @@
 // frontend/src/components/chat/ChatHeader.jsx
 const ChatHeader = ({ isConnected = false }) => {
     return (
-        <div className="chat-header">
-            <div className="d-flex align-items-center">
-                <i className="bi bi-chat-dots-fill text-primary me-2"></i>
-                <h5 className="mb-0">Общий чат</h5>
+        <div className="p-3 p-lg-4 border-bottom user-chat-topbar">
+            <div className="row align-items-center">
+                <div className="col-sm-4 col-8">
+                    <div className="d-flex align-items-center">
+                        <h5 className="mb-0">Общий чат</h5>
+                    </div>
+                </div>
             </div>
             <div className={`text-muted small ${!isConnected ? 'text-danger' : ''}`}>
                 {isConnected ? (
