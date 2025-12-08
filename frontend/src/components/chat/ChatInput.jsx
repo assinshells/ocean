@@ -50,11 +50,9 @@ const ChatInput = ({ onSendMessage, isConnected = false }) => {
         };
     }, [emitTypingStart, emitTypingStop, isConnected]);
 
-    // Функция очистки поля ввода
     const clearInput = useCallback((shouldFocus = false) => {
         setMessage('');
 
-        // Останавливаем typing индикатор
         emitTypingStop.cancel();
         if (isTypingRef.current && isConnected) {
             socketService.emit('typing:stop');
@@ -66,7 +64,6 @@ const ChatInput = ({ onSendMessage, isConnected = false }) => {
         }
     }, [emitTypingStop, isConnected]);
 
-    // Обработчик ESC для очистки
     useEffect(() => {
         const handleEscape = (e) => {
             if (e.key === 'Escape' && message.trim()) {
@@ -114,11 +111,7 @@ const ChatInput = ({ onSendMessage, isConnected = false }) => {
             }
 
             if (!isConnected) {
-                logger.error("Submit blocked: not connected", {
-                    isConnected,
-                    socketExists: !!socketService.getSocket(),
-                    socketId: socketService.getSocket()?.id
-                });
+                logger.error("Submit blocked: not connected");
                 return;
             }
 
@@ -132,10 +125,7 @@ const ChatInput = ({ onSendMessage, isConnected = false }) => {
                 });
 
                 await onSendMessage(trimmedMessage);
-
-                // Очищаем поле только после успешной отправки
                 clearInput(true);
-
                 logger.debug("Message submitted successfully");
             } catch (error) {
                 logger.error('Failed to send message', {
@@ -165,13 +155,33 @@ const ChatInput = ({ onSendMessage, isConnected = false }) => {
     const isOverLimit = charCount > 2000;
 
     return (
-        <div className="chat-input">
-            <form onSubmit={handleSubmit}>
-                <div className="flex-grow-1 position-relative">
-                    <input
+        <div className="chat-input-container">
+            <form onSubmit={handleSubmit} className="chat-input-form">
+                {/* Additional Actions (опционально) */}
+                <div className="input-actions-left">
+                    <button
+                        type="button"
+                        className="btn btn-icon"
+                        title="Прикрепить файл"
+                        disabled={!isConnected}
+                    >
+                        <i className="bi bi-paperclip"></i>
+                    </button>
+                    <button
+                        type="button"
+                        className="btn btn-icon"
+                        title="Emoji"
+                        disabled={!isConnected}
+                    >
+                        <i className="bi bi-emoji-smile"></i>
+                    </button>
+                </div>
+
+                {/* Text Input */}
+                <div className="input-field-wrapper">
+                    <textarea
                         ref={inputRef}
-                        type="text"
-                        className={`form-control ${isNearLimit ? 'border-warning' : ''}`}
+                        className={`form-control chat-textarea ${isNearLimit ? 'border-warning' : ''}`}
                         placeholder={
                             isConnected
                                 ? 'Введите сообщение...'
@@ -179,54 +189,49 @@ const ChatInput = ({ onSendMessage, isConnected = false }) => {
                         }
                         value={message}
                         onChange={handleChange}
-                        onKeyPress={handleKeyPress}
+                        onKeyDown={handleKeyPress}
                         disabled={!isConnected}
                         maxLength={2000}
                         autoComplete="off"
+                        rows={1}
+                        style={{
+                            minHeight: '44px',
+                            maxHeight: '120px',
+                            resize: 'none',
+                            overflow: 'auto'
+                        }}
                     />
 
+                    {/* Character Counter & Clear Button */}
                     {charCount > 0 && (
-                        <div
-                            className="position-absolute end-0 bottom-0 me-2 mb-2 d-flex align-items-center gap-2"
-                            style={{ pointerEvents: 'auto' }}
-                        >
+                        <div className="input-indicators">
                             <small
-                                className={
-                                    isOverLimit ? 'text-danger fw-bold' :
+                                className={`char-counter ${isOverLimit ? 'text-danger fw-bold' :
                                         isNearLimit ? 'text-warning' :
                                             'text-muted'
-                                }
+                                    }`}
                             >
                                 {charCount}/2000
                             </small>
 
                             <button
                                 type="button"
-                                className="btn btn-sm btn-link text-muted p-0"
+                                className="btn btn-clear"
                                 onClick={() => clearInput(true)}
                                 title="Очистить (ESC)"
                                 tabIndex={-1}
-                                style={{
-                                    fontSize: '0.9rem',
-                                    textDecoration: 'none',
-                                    opacity: 0.6,
-                                    transition: 'opacity 0.2s',
-                                    lineHeight: 1
-                                }}
-                                onMouseEnter={(e) => e.currentTarget.style.opacity = 1}
-                                onMouseLeave={(e) => e.currentTarget.style.opacity = 0.6}
                             >
-                                <i className="bi bi-x-circle"></i>
+                                <i className="bi bi-x-circle-fill"></i>
                             </button>
                         </div>
                     )}
                 </div>
 
+                {/* Send Button */}
                 <button
                     type="submit"
-                    className="btn btn-primary"
+                    className="btn btn-send"
                     disabled={isDisabled}
-                    aria-label="Отправить сообщение"
                     title={
                         !isConnected
                             ? "Нет подключения"
@@ -234,32 +239,29 @@ const ChatInput = ({ onSendMessage, isConnected = false }) => {
                                 ? "Отправка..."
                                 : isOverLimit
                                     ? "Сообщение слишком длинное"
-                                    : "Отправить"
+                                    : "Отправить (Enter)"
                     }
                 >
                     {isSending ? (
-                        <span
-                            className="spinner-border spinner-border-sm"
-                            role="status"
-                            aria-hidden="true"
-                        ></span>
+                        <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
                     ) : (
                         <i className="bi bi-send-fill"></i>
                     )}
                 </button>
             </form>
 
+            {/* Error Messages */}
             {!isConnected && (
-                <div className="text-danger small mt-2">
+                <div className="input-warning">
                     <i className="bi bi-exclamation-circle me-1"></i>
-                    Нет подключения к серверу. Проверьте соединение.
+                    Нет подключения к серверу
                 </div>
             )}
 
             {isOverLimit && (
-                <div className="text-danger small mt-2">
+                <div className="input-warning text-danger">
                     <i className="bi bi-exclamation-triangle-fill me-1"></i>
-                    Сообщение превышает максимальную длину (2000 символов)
+                    Сообщение превышает максимальную длину
                 </div>
             )}
         </div>
