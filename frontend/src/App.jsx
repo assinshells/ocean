@@ -9,8 +9,8 @@ function App() {
     <BrowserRouter>
       <AuthProvider>
         <AppRoutes />
-        {/* ✅ НОВОЕ: Debug панель (только в development) */}
-        <SocketDebug />
+        {/* ✅ НОВОЕ: Debug панель (только в development) 
+        <SocketDebug />*/}
       </AuthProvider>
     </BrowserRouter>
   );

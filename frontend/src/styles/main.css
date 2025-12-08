@@ -15,30 +15,6 @@ body {
     "Helvetica Neue", Arial, sans-serif;
   overflow: hidden;
 }
-/* Убираем стрелочку у dropdown */
-.no-caret::after {
-  display: none !important;
-}
-/* Светлая тема */
-body.light {
-  --bg: #ffffff;
-  --text: #000000;
-  background: var(--bg);
-  color: var(--text);
-}
-
-/* Тёмная тема */
-body.dark {
-  --bg: #121212;
-  --text: #ffffff;
-  background: var(--bg);
-  color: var(--text);
-}
-
-body.dark .modal-content {
-  background: #1f1f1f;
-  color: #ffffff;
-}
 
 /* ===== LAYOUT CONTAINER ===== */
 
@@ -56,14 +32,14 @@ body.dark .modal-content {
 
 /* ===== RIGHT SIDEBAR ===== */
 
-.side-menu {
+/*.side-menu {
   min-width: 75px;
   max-width: 75px;
   height: 100vh;
   background-color: var(--bs-sidebar-bg);
   display: flex;
   box-shadow: 0 2px 4px rgba(15, 34, 58, 0.12);
-}
+}*/
 
 @media (max-width: 991.98px) {
   .side-menu {

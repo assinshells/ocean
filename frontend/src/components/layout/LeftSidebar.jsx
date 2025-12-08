@@ -81,16 +81,15 @@ export default function LeftSidebar({ handleLogout }) {
         <>
             <div className="side-menu flex-lg-column me-lg-1 ms-lg-0">
                 <Logo />
-
                 <div className="flex-lg-column my-auto">
                     <ul className="nav side-menu-nav justify-content-center">
-                        <li className="nav-item" title="Профиль">
+                        <li className="nav-item" title="">
                             <a className="nav-link" href="#" onClick={(e) => e.preventDefault()}>
                                 <i className="bi bi-person"></i>
                             </a>
                         </li>
 
-                        <li className="nav-item" title="Настройки">
+                        <li className="nav-item" title="">
                             <a className="nav-link" href="#" onClick={handleSettingsClick}>
                                 <i className="bi bi-gear"></i>
                             </a>

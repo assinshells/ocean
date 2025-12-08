@@ -1,0 +1,28 @@
+/* ===== THEME VARIABLES ===== */
+
+/* Light Theme (Default) */
+body.light {
+  --bs-body-bg: #f7f7ff;
+  --bs-body-color: #212529;
+  --bs-white: #ffffff;
+  --bs-border-color: #e6ebf5;
+  --bs-secondary-bg: #f5f7fb;
+  --bs-secondary-color: #9aa1b0;
+
+  /* Sidebar */
+  --bs-sidebar-bg: #f7f7ff;
+  --bs-sidebar-menu-item-color: #7a7f9a;
+}
+/* Dark Theme */
+body.dark {
+  --bs-body-bg: #1a1d21;
+  --bs-body-color: #999ca0;
+  --bs-white: #212529;
+  --bs-border-color: #333842;
+  --bs-secondary-bg: #2a2d33;
+  --bs-secondary-color: #6c757d;
+
+  /* Sidebar */
+  --bs-sidebar-bg: #1a1d21;
+  --bs-sidebar-menu-item-color: #999ca0;
+}

@@ -2,7 +2,7 @@
 
 /* Light Theme (Default) */
 body.light {
-  --bs-body-bg: #f7f7ff;
+  /*--bs-body-bg: #f7f7ff;*/
   --bs-body-color: #212529;
   --bs-white: #ffffff;
   --bs-border-color: #e6ebf5;
@@ -11,8 +11,8 @@ body.light {
   --bs-dark: #343a40;
 
   /* Sidebar */
-  --bs-sidebar-bg: #ffffff;
-  --bs-sidebar-menu-item-color: #7a7f9a;
+  /*--bs-sidebar-bg: #ffffff;
+  --bs-sidebar-menu-item-color: #7a7f9a;*/
 
   /* Chat */
   --bs-chat-bg: #ffffff;
@@ -28,7 +28,7 @@ body.light {
 
 /* Dark Theme */
 body.dark {
-  --bs-body-bg: #1a1d21;
+  /*--bs-body-bg: #1a1d21;*/
   --bs-body-color: #e1e9f1;
   --bs-white: #262a2e;
   --bs-border-color: #36404a;
@@ -120,10 +120,10 @@ body.dark .modal-backdrop {
 }
 
 /* Sidebar */
-.side-menu {
+/*.side-menu {
   background-color: var(--bs-sidebar-bg) !important;
   border-right-color: var(--bs-border-color) !important;
-}
+}*/
 
 @media (max-width: 991.98px) {
   .side-menu {
